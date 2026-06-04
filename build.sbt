@@ -219,11 +219,32 @@ lazy val aliases = new Aliases(
     sconfigDerivation,
     diffDerivation,
     avroDerivation,
-    pureconfigDerivation
+    pureconfigDerivation,
+    reactivemongoBsonDerivation
   ),
   testOnly = Seq(integrationTests),
   compileOnly = Seq(benchmarks)
 )
+
+lazy val reactivemongoBsonDerivation = projectMatrix
+  .in(file("reactivemongo-bson-derivation"))
+  .someVariations(List(versions.scala3), List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .dependsOn(derivationCommons)
+  .disablePlugins(WelcomePlugin)
+  .settings(
+    moduleName := "kindlings-reactivemongo-bson-derivation",
+    name := "kindlings-reactivemongo-bson-derivation",
+    description := "ReactiveMongo BSONDocumentHandler derivation using Hearth macros — JVM-only (reactivemongo-bson-api is JVM-only)"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.reactivemongo" %% "reactivemongo-bson-api" % "1.1.0-RC21.SNAPSHOT"
+    ),
+    resolvers += Resolver.mavenLocal
+  )
 
 lazy val root = project
   .in(file("."))
@@ -248,6 +269,7 @@ lazy val root = project
   .aggregate(catsDerivation.projectRefs *)
   .aggregate(scalacheckDerivation.projectRefs *)
   .aggregate(catsIntegration.projectRefs *)
+  .aggregate(reactivemongoBsonDerivation.projectRefs *)
   .aggregate(diffDerivation.projectRefs *)
   .aggregate(integrationTests.projectRefs *)
   .aggregate(benchmarks.projectRefs *)
