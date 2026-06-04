@@ -204,6 +204,7 @@ lazy val aliases = new Aliases(
     diffDerivation,
     avroDerivation,
     pureconfigDerivation,
+    reactivemongoBsonDerivation,
     di,
     diCats,
     mock,
@@ -213,6 +214,26 @@ lazy val aliases = new Aliases(
   testOnly = Seq(integrationTests, derivationPolicyTests),
   compileOnly = Seq(benchmarks)
 )
+
+lazy val reactivemongoBsonDerivation = projectMatrix
+  .in(file("reactivemongo-bson-derivation"))
+  .someVariations(List(versions.scala3), List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .dependsOn(derivationCommons)
+  .disablePlugins(WelcomePlugin)
+  .settings(
+    moduleName := "kindlings-reactivemongo-bson-derivation",
+    name := "kindlings-reactivemongo-bson-derivation",
+    description := "ReactiveMongo BSONDocumentHandler derivation using Hearth macros — JVM-only (reactivemongo-bson-api is JVM-only)"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.reactivemongo" %% "reactivemongo-bson-api" % "1.1.0-RC21.SNAPSHOT"
+    ),
+    resolvers += Resolver.mavenLocal
+  )
 
 // On sbt 2.0 sbt-welcome is gone, so the `ci-*` / `test-*` command aliases it used to register
 // (from `aliases.usefulTasks(...)`) are wired explicitly here. The CI workflow invokes
@@ -271,6 +292,7 @@ lazy val root = project
   .aggregate(catsTaglessDerivation.projectRefs *)
   .aggregate(scalacheckDerivation.projectRefs *)
   .aggregate(catsIntegration.projectRefs *)
+  .aggregate(reactivemongoBsonDerivation.projectRefs *)
   .aggregate(diffDerivation.projectRefs *)
   .aggregate(di.projectRefs *)
   .aggregate(diCats.projectRefs *)
