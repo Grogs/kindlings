@@ -1,7 +1,7 @@
 package hearth.kindlings.reactivemongobsonderivation
 
 import hearth.MacroSuite
-import reactivemongo.api.bson._
+import reactivemongo.api.bson.*
 
 final class BsonDocumentHandlerSpec extends MacroSuite {
 
@@ -32,7 +32,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
     test("derive for nested case class") {
       @scala.annotation.nowarn("msg=is never used|unused")
-      val handler: KindlingsBsonDocumentHandler[PersonWithAddress] = KindlingsBsonDocumentHandler.derived[PersonWithAddress]
+      val handler: KindlingsBsonDocumentHandler[PersonWithAddress] =
+        KindlingsBsonDocumentHandler.derived[PersonWithAddress]
 
       val person = PersonWithAddress("Bob", Address("123 Main St", "Springfield"))
       val doc = BSONDocument(
@@ -132,7 +133,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
       test("Option field with Some default") {
         @scala.annotation.nowarn("msg=is never used|unused")
-        val handler: KindlingsBsonDocumentHandler[OptionalDefault] = KindlingsBsonDocumentHandler.derived[OptionalDefault]
+        val handler: KindlingsBsonDocumentHandler[OptionalDefault] =
+          KindlingsBsonDocumentHandler.derived[OptionalDefault]
 
         val doc = BSONDocument.empty
         assertEquals(handler.readDocument(doc).get, OptionalDefault(Some("unknown")))
@@ -140,10 +142,123 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
       test("Option field with Some default overridden") {
         @scala.annotation.nowarn("msg=is never used|unused")
-        val handler: KindlingsBsonDocumentHandler[OptionalDefault] = KindlingsBsonDocumentHandler.derived[OptionalDefault]
+        val handler: KindlingsBsonDocumentHandler[OptionalDefault] =
+          KindlingsBsonDocumentHandler.derived[OptionalDefault]
 
         val doc = BSONDocument("name" -> "custom")
         assertEquals(handler.readDocument(doc).get, OptionalDefault(Some("custom")))
+      }
+    }
+
+    group("collection fields") {
+
+      test("List[String]") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithList] = KindlingsBsonDocumentHandler.derived[WithList]
+
+        val value = WithList(List("a", "b", "c"))
+
+        // Write round-trip
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("Set[Int]") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithSet] = KindlingsBsonDocumentHandler.derived[WithSet]
+
+        val value = WithSet(Set(1, 2, 3))
+
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+    }
+
+    group("value types") {
+
+      test("AnyVal wrapper") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithValueType] = KindlingsBsonDocumentHandler.derived[WithValueType]
+
+        val value = WithValueType(WrapperId(42), "test")
+        // Value types wrap as {"value": <inner_bson>} in their own document
+        val doc = BSONDocument("id" -> BSONDocument("value" -> 42), "name" -> "test")
+
+        assertEquals(handler.readDocument(doc).get, value)
+        assertEquals(handler.writeTry(value).get, doc)
+      }
+    }
+
+    group("field name annotations") {
+
+      test("@fieldName annotation remaps field") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[AnnotatedFields] =
+          KindlingsBsonDocumentHandler.derived[AnnotatedFields]
+
+        val value = AnnotatedFields("Alice", 30)
+        val doc = BSONDocument("first_name" -> "Alice", "years_old" -> 30)
+
+        assertEquals(handler.readDocument(doc).get, value)
+        assertEquals(handler.writeTry(value).get, doc)
+      }
+    }
+
+    group("enum / sealed trait") {
+
+      test("sealed trait with case objects") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[SimpleEnum] = KindlingsBsonDocumentHandler.derived[SimpleEnum]
+
+        // Test read
+        val fooDoc = BSONDocument("@type" -> "Foo")
+        assertEquals(handler.readDocument(fooDoc).get, Foo)
+
+        val barDoc = BSONDocument("@type" -> "Bar")
+        assertEquals(handler.readDocument(barDoc).get, Bar)
+
+        // Test write
+        assertEquals(handler.writeTry(Foo).get, fooDoc)
+        assertEquals(handler.writeTry(Bar).get, barDoc)
+      }
+
+      test("sealed trait — round trip") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[SimpleEnum] = KindlingsBsonDocumentHandler.derived[SimpleEnum]
+
+        val written = handler.writeTry(Foo).get
+        val readBack = handler.readDocument(written).get
+        assertEquals(readBack, Foo)
+      }
+
+      test("unknown discriminator fails") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[SimpleEnum] = KindlingsBsonDocumentHandler.derived[SimpleEnum]
+
+        val unknownDoc = BSONDocument("@type" -> "Baz")
+        assert(handler.readDocument(unknownDoc).isFailure)
+      }
+
+      test("sealed trait with case classes") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Expr] = KindlingsBsonDocumentHandler.derived[Expr]
+
+        val num = Num(42)
+        val str = Str("hello")
+        val noExpr = NoExpr
+
+        // Test read
+        assertEquals(handler.readDocument(BSONDocument("@type" -> "Num", "value" -> 42)).get, num)
+        assertEquals(
+          handler.readDocument(BSONDocument("@type" -> "Str", "value" -> "hello")).get,
+          str
+        )
+        assertEquals(handler.readDocument(BSONDocument("@type" -> "NoExpr")).get, noExpr)
+
+        // Test write
+        assertEquals(handler.writeTry(num).get, BSONDocument("@type" -> "Num", "value" -> 42))
+        assertEquals(handler.writeTry(str).get, BSONDocument("@type" -> "Str", "value" -> "hello"))
+        assertEquals(handler.writeTry(noExpr).get, BSONDocument("@type" -> "NoExpr"))
       }
     }
 
