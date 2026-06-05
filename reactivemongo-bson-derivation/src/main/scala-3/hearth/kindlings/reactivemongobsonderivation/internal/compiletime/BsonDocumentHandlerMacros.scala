@@ -5,10 +5,13 @@ import scala.quoted.*
 
 final private[reactivemongobsonderivation] class BsonDocumentHandlerMacros(q: Quotes)
     extends MacroCommonsScala3(using q),
+      AnnotationSupportScala3,
       BsonDocumentHandlerMacrosImpl
 
 private[reactivemongobsonderivation] object BsonDocumentHandlerMacros {
 
-  def deriveTypeClassImpl[A: Type](using q: Quotes): Expr[hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler[A]] =
+  def deriveTypeClassImpl[A: Type](using
+      q: Quotes
+  ): Expr[hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler[A]] =
     new BsonDocumentHandlerMacros(q).deriveTypeClass[A]
 }
