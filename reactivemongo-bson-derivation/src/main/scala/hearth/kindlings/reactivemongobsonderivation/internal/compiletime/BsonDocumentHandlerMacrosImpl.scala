@@ -6,7 +6,7 @@ import hearth.fp.effect.*
 import hearth.fp.syntax.*
 import hearth.std.*
 
-import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+import hearth.kindlings.reactivemongobsonderivation.{BsonDocumentHandlerConfig, KindlingsBsonDocumentHandler}
 import reactivemongo.api.bson.BSONDocument
 
 import scala.util.Try
@@ -17,6 +17,21 @@ trait BsonDocumentHandlerMacrosImpl
   this: MacroCommons & StdExtensions & AnnotationSupport =>
 
   override protected def derivationSettingsNamespace: String = "reactivemongoBsonDerivation"
+
+  // Config values extracted at compile time
+  case class ConfigValues(
+      discriminatorFieldName: String,
+      skipUnexpectedFields: Boolean
+  )
+
+  object ConfigValues {
+    val DefaultDiscriminatorFieldName = "className"
+    val DefaultSkipUnexpectedFields = true
+    val Defaults: ConfigValues = ConfigValues(DefaultDiscriminatorFieldName, DefaultSkipUnexpectedFields)
+  }
+
+  // Class field to store config values (set in deriveTypeClass, used by handlers)
+  private var configValues: ConfigValues = ConfigValues.Defaults
 
   // Types
 
@@ -54,7 +69,9 @@ trait BsonDocumentHandlerMacrosImpl
 
   // Entrypoints
 
-  def deriveTypeClass[A: Type]: Expr[KindlingsBsonDocumentHandler[A]] = {
+  def deriveTypeClass[A: Type](
+      configExpr: Option[Expr[BsonDocumentHandlerConfig]] = None
+  ): Expr[KindlingsBsonDocumentHandler[A]] = {
     val selfType: Option[??] = Some(Type[A].as_??)
 
     if (Type[A] =:= Type.of[Nothing].asInstanceOf[Type[A]] || Type[A] =:= Type.of[Any].asInstanceOf[Type[A]])
@@ -69,6 +86,21 @@ trait BsonDocumentHandlerMacrosImpl
         s"Deriving BSONDocumentHandler for ${Type[A].prettyPrint} at: ${Environment.currentPosition.prettyPrint}"
       ) {
         MIO.scoped { runSafe =>
+          // Extract config values at compile time and store in class field
+          configValues = configExpr match {
+            case Some(cfg) =>
+              cfg.semiEval.toOption match {
+                case Some(c) =>
+                  val discriminator = c.discriminatorFieldName.getOrElse(ConfigValues.DefaultDiscriminatorFieldName)
+                  val skipUnexpected = c.skipUnexpectedFields
+                  ConfigValues(discriminator, skipUnexpected)
+                case None =>
+                  ConfigValues.Defaults
+              }
+            case None =>
+              ConfigValues.Defaults
+          }
+
           val fromCtx: (DerivationCtx[A] => Expr[KindlingsBsonDocumentHandler[A]]) = (ctx: DerivationCtx[A]) =>
             runSafe {
               for {
@@ -316,22 +348,19 @@ trait BsonDocumentHandlerMacrosImpl
                       }
                       readerWriterMIO.map { case (innerReaderExpr, innerWriterExpr) =>
                         Expr.quote {
-                          new KindlingsBsonDocumentHandler[A] {
-                            def readDocument(doc: BSONDocument): scala.util.Try[A] =
-                              Expr
-                                .splice(innerReaderExpr)
-                                .readTry(doc.get("value").getOrElse(reactivemongo.api.bson.BSONNull))
-                                .map { innerValue =>
-                                  Expr.splice(wrapLambda).apply(innerValue)
-                                }
-                            def writeTry(value: A): scala.util.Try[BSONDocument] =
-                              Expr
-                                .splice(innerWriterExpr)
-                                .writeTry(Expr.splice(unwrapLambda)(value))
-                                .map { bsonValue =>
-                                  BSONDocument("value" -> bsonValue)
-                                }
-                          }
+                          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                            .handlerInstance[A](
+                              (doc: BSONDocument) =>
+                                Expr
+                                  .splice(innerReaderExpr)
+                                  .readTry(doc.get("value").getOrElse(reactivemongo.api.bson.BSONNull))
+                                  .map(innerValue => Expr.splice(wrapLambda).apply(innerValue)),
+                              (value: A) =>
+                                Expr
+                                  .splice(innerWriterExpr)
+                                  .writeTry(Expr.splice(unwrapLambda)(value))
+                                  .map(bsonValue => BSONDocument("value" -> bsonValue))
+                            )
                         }
                       }
                     }
@@ -613,31 +642,32 @@ trait BsonDocumentHandlerMacrosImpl
             val innerCtx = ctx.nest[Inner]
             deriveResultRecursively[Inner](using innerCtx).flatMap { innerHandlerExpr =>
               val handlerExpr = Expr.quote {
-                new KindlingsBsonDocumentHandler[A] {
-                  def readDocument(doc: BSONDocument): scala.util.Try[A] =
-                    doc.get("value") match {
-                      case None | Some(reactivemongo.api.bson.BSONNull) =>
-                        scala.util.Success(None.asInstanceOf[A])
-                      case Some(v) =>
-                        Expr
-                          .splice(innerHandlerExpr)
-                          .asInstanceOf[reactivemongo.api.bson.BSONReader[Inner]]
-                          .readTry(v)
-                          .map(_.asInstanceOf[A])
-                    }
-                  def writeTry(value: A): scala.util.Try[BSONDocument] =
-                    value match {
-                      case Some(v) =>
-                        Expr
-                          .splice(innerHandlerExpr)
-                          .asInstanceOf[reactivemongo.api.bson.BSONWriter[Inner]]
-                          .writeTry(v.asInstanceOf[Inner])
-                          .map { bsv =>
-                            BSONDocument("value" -> bsv)
-                          }
-                      case None => scala.util.Success(BSONDocument.empty)
-                    }
-                }
+                hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                  .handlerInstance[A](
+                    (doc: BSONDocument) =>
+                      doc.get("value") match {
+                        case None | Some(reactivemongo.api.bson.BSONNull) =>
+                          scala.util.Success(None.asInstanceOf[A])
+                        case Some(v) =>
+                          Expr
+                            .splice(innerHandlerExpr)
+                            .asInstanceOf[reactivemongo.api.bson.BSONReader[Inner]]
+                            .readTry(v)
+                            .map(_.asInstanceOf[A])
+                      },
+                    (value: A) =>
+                      value match {
+                        case Some(v) =>
+                          Expr
+                            .splice(innerHandlerExpr)
+                            .asInstanceOf[reactivemongo.api.bson.BSONWriter[Inner]]
+                            .writeTry(v.asInstanceOf[Inner])
+                            .map { bsv =>
+                              BSONDocument("value" -> bsv)
+                            }
+                        case None => scala.util.Success(BSONDocument.empty)
+                      }
+                  )
               }
               MIO.pure(Rule.matched(handlerExpr))
             }
@@ -945,7 +975,7 @@ trait BsonDocumentHandlerMacrosImpl
           Log.error(err.message) >> MIO.fail(err)
 
         case Some(childrenNel) =>
-          val discriminatorField = "@type"
+          val discriminatorField = configValues.discriminatorFieldName
           val discriminatorFieldExpr = Expr(discriminatorField)
           val knownNames: String = childrenList.map(_._1).mkString(", ")
           val knownNamesExpr = Expr(knownNames)

@@ -6,13 +6,13 @@ package hearth.kindlings.reactivemongobsonderivation
   *   Function to transform field names (default: identity)
   * @param discriminatorFieldName
   *   The field name used for sealed trait/enum discrimination (None = wrapper-style, Some(name) = discriminator-style,
-  *   default: Some("_type"))
+  *   default: Some("className"))
   * @param skipUnexpectedFields
   *   If true, skip unknown fields during decoding (default: true)
   */
 final case class BsonDocumentHandlerConfig(
     fieldNameMapper: String => String = identity,
-    discriminatorFieldName: Option[String] = Some("_type"),
+    discriminatorFieldName: Option[String] = BsonDocumentHandlerConfig.defaultDiscriminatorFieldName,
     skipUnexpectedFields: Boolean = true
 ) {
 
@@ -38,6 +38,9 @@ final case class BsonDocumentHandlerConfig(
 object BsonDocumentHandlerConfig {
 
   implicit val default: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig()
+
+  /** Default discriminator field name, aligned with ReactiveMongo-BSON's `MacroConfiguration.defaultDiscriminator` */
+  val defaultDiscriminatorFieldName: Option[String] = Some("className")
 
   private[reactivemongobsonderivation] val snakeCase: String => String = { s =>
     val sb = new StringBuilder

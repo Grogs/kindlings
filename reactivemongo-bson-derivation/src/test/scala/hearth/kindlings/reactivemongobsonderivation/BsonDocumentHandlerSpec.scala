@@ -221,10 +221,10 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val handler: KindlingsBsonDocumentHandler[SimpleEnum] = KindlingsBsonDocumentHandler.derived[SimpleEnum]
 
         // Test read
-        val fooDoc = BSONDocument("@type" -> "Foo")
+        val fooDoc = BSONDocument("className" -> "Foo")
         assertEquals(handler.readDocument(fooDoc).get, Foo)
 
-        val barDoc = BSONDocument("@type" -> "Bar")
+        val barDoc = BSONDocument("className" -> "Bar")
         assertEquals(handler.readDocument(barDoc).get, Bar)
 
         // Test write
@@ -232,7 +232,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.writeTry(Bar).get, barDoc)
       }
 
-      test("sealed trait — round trip") {
+      test("sealed trait - round trip") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[SimpleEnum] = KindlingsBsonDocumentHandler.derived[SimpleEnum]
 
@@ -245,7 +245,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[SimpleEnum] = KindlingsBsonDocumentHandler.derived[SimpleEnum]
 
-        val unknownDoc = BSONDocument("@type" -> "Baz")
+        val unknownDoc = BSONDocument("className" -> "Baz")
         assert(handler.readDocument(unknownDoc).isFailure)
       }
 
@@ -258,17 +258,35 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val noExpr = NoExpr
 
         // Test read
-        assertEquals(handler.readDocument(BSONDocument("@type" -> "Num", "value" -> 42)).get, num)
+        assertEquals(handler.readDocument(BSONDocument("className" -> "Num", "value" -> 42)).get, num)
         assertEquals(
-          handler.readDocument(BSONDocument("@type" -> "Str", "value" -> "hello")).get,
+          handler.readDocument(BSONDocument("className" -> "Str", "value" -> "hello")).get,
           str
         )
-        assertEquals(handler.readDocument(BSONDocument("@type" -> "NoExpr")).get, noExpr)
+        assertEquals(handler.readDocument(BSONDocument("className" -> "NoExpr")).get, noExpr)
 
         // Test write
-        assertEquals(handler.writeTry(num).get, BSONDocument("@type" -> "Num", "value" -> 42))
-        assertEquals(handler.writeTry(str).get, BSONDocument("@type" -> "Str", "value" -> "hello"))
-        assertEquals(handler.writeTry(noExpr).get, BSONDocument("@type" -> "NoExpr"))
+        assertEquals(handler.writeTry(num).get, BSONDocument("className" -> "Num", "value" -> 42))
+        assertEquals(handler.writeTry(str).get, BSONDocument("className" -> "Str", "value" -> "hello"))
+        assertEquals(handler.writeTry(noExpr).get, BSONDocument("className" -> "NoExpr"))
+      }
+    }
+
+    group("config") {
+      test("custom discriminator field name") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(discriminatorFieldName = Some("kind"))
+
+        val handler = KindlingsBsonDocumentHandler.derivedConfig[SimpleEnum]
+
+        // Write with custom discriminator
+        val written = handler.writeTry(Foo).get
+        val discriminatorField = written.get("kind")
+        assert(discriminatorField.isDefined, "Should have 'kind' field as discriminator")
+        assertEquals(discriminatorField.get.asInstanceOf[BSONString].value, "Foo")
+
+        // Read with custom discriminator
+        val result = handler.readDocument(written).get
+        assertEquals(result, Foo)
       }
     }
 
