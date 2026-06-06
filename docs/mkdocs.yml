@@ -59,6 +59,7 @@ nav:
     - "FastShowPretty": "fast-show-pretty.md"
     - "Jsoniter Scala": "jsoniter-derivation.md"
     - "PureConfig": "pureconfig-derivation.md"
+    - "ReactiveMongo BSON": "reactivemongo-bson-derivation.md"
     - "ScalaCheck": "scalacheck-derivation.md"
     - "sconfig (HOCON)": "sconfig-derivation.md"
     - "Tapir Schema": "tapir-schema-derivation.md"
