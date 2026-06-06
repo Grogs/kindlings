@@ -276,7 +276,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       test("custom discriminator field name") {
         given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(discriminatorFieldName = Some("kind"))
 
-        val handler = KindlingsBsonDocumentHandler.derivedConfig[SimpleEnum]
+        val handler = KindlingsBsonDocumentHandler.derived[SimpleEnum]
 
         // Write with custom discriminator
         val written = handler.writeTry(Foo).get

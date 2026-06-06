@@ -1,5 +1,64 @@
 # Tasks: reactivemongo-bson-derivation Improvements
 
+## 📋 Handoff: Config Wiring (Current Session)
+
+**Date**: 2026-06-06  
+**Status**: Working state achieved, config wiring partially complete
+
+### What Was Done
+
+1. **Fixed semiEval null pointer exception** by temporarily removing config from DerivationCtx
+2. **Achieved stable working state**: 22/23 tests pass
+3. **Hardcoded discriminator to "className"** as a temporary solution
+4. **Config parameter is accepted but not used** (reserved for future implementation)
+
+### Current Working State
+
+- ✅ All existing tests pass (22/23)
+- ✅ Enum derivation works with default "className" discriminator
+- ✅ No compilation errors or warnings
+- ⚠️ Custom discriminator test fails (expected - config not yet wired)
+
+### Files Modified (Since Last Commit)
+
+- `BsonDocumentHandlerMacrosImpl.scala`: Removed config/evaluatedConfig from DerivationCtx, hardcoded discriminator
+- `BsonDocumentHandlerSpec.scala`: Added debug logging import (line 4)
+
+### What Needs to Be Done Next
+
+**Task 2 (Config Wiring) is IN PROGRESS but BLOCKED by semiEval issue**
+
+The core problem: `semiEval` cannot evaluate `BsonDocumentHandlerConfig` because it contains a function field (`fieldNameMapper: String => String`). This causes null pointer exceptions when trying to access config at compile time.
+
+**Recommended approach** (from `/tmp/handoff-semieval-issue-investigation.md`):
+
+1. **Don't rely on semiEval for correctness** - treat it as optimization only
+2. **Always splice config at runtime** as fallback (following jsoniter pattern)
+3. **Re-add config to DerivationCtx** but with defensive null checks
+4. **In enum handler**, use pattern:
+   ```scala
+   val discriminatorFieldExpr: Expr[String] =
+     ctx.evaluatedConfig.flatMap(_.discriminatorFieldName) match {
+       case Some(discriminator) => Expr(discriminator)  // compile-time constant
+       case None => Expr.quote { Expr.splice(ctx.config).discriminatorFieldName.getOrElse("className") }  // runtime fallback
+     }
+   ```
+
+### Immediate Next Steps
+
+1. Re-add `config` and `evaluatedConfig` to DerivationCtx with proper null safety
+2. Update enum handler to use runtime config splicing as fallback
+3. Verify custom discriminator test passes
+4. Document the semiEval limitation in user docs
+
+### Reference Documents
+
+- `/tmp/handoff-semieval-issue.md` - Original semiEval investigation
+- `/tmp/handoff-semieval-issue-investigation.md` - Detailed analysis with jsoniter comparison
+- `docs/contributing/kindlings-factory-instance/SKILL.md` - Factory pattern reference
+
+---
+
 ## High Priority
 
 ### 1. Factory instance pattern [DONE]

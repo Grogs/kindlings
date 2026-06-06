@@ -18,21 +18,6 @@ trait BsonDocumentHandlerMacrosImpl
 
   override protected def derivationSettingsNamespace: String = "reactivemongoBsonDerivation"
 
-  // Config values extracted at compile time
-  case class ConfigValues(
-      discriminatorFieldName: String,
-      skipUnexpectedFields: Boolean
-  )
-
-  object ConfigValues {
-    val DefaultDiscriminatorFieldName = "className"
-    val DefaultSkipUnexpectedFields = true
-    val Defaults: ConfigValues = ConfigValues(DefaultDiscriminatorFieldName, DefaultSkipUnexpectedFields)
-  }
-
-  // Class field to store config values (set in deriveTypeClass, used by handlers)
-  private var configValues: ConfigValues = ConfigValues.Defaults
-
   // Types
 
   private[compiletime] object Types {
@@ -70,8 +55,9 @@ trait BsonDocumentHandlerMacrosImpl
   // Entrypoints
 
   def deriveTypeClass[A: Type](
-      configExpr: Option[Expr[BsonDocumentHandlerConfig]] = None
+      configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentHandler[A]] = {
+    val _ = configExpr // Parameter reserved for future config support
     val selfType: Option[??] = Some(Type[A].as_??)
 
     if (Type[A] =:= Type.of[Nothing].asInstanceOf[Type[A]] || Type[A] =:= Type.of[Any].asInstanceOf[Type[A]])
@@ -86,21 +72,6 @@ trait BsonDocumentHandlerMacrosImpl
         s"Deriving BSONDocumentHandler for ${Type[A].prettyPrint} at: ${Environment.currentPosition.prettyPrint}"
       ) {
         MIO.scoped { runSafe =>
-          // Extract config values at compile time and store in class field
-          configValues = configExpr match {
-            case Some(cfg) =>
-              cfg.semiEval.toOption match {
-                case Some(c) =>
-                  val discriminator = c.discriminatorFieldName.getOrElse(ConfigValues.DefaultDiscriminatorFieldName)
-                  val skipUnexpected = c.skipUnexpectedFields
-                  ConfigValues(discriminator, skipUnexpected)
-                case None =>
-                  ConfigValues.Defaults
-              }
-            case None =>
-              ConfigValues.Defaults
-          }
-
           val fromCtx: (DerivationCtx[A] => Expr[KindlingsBsonDocumentHandler[A]]) = (ctx: DerivationCtx[A]) =>
             runSafe {
               for {
@@ -110,7 +81,9 @@ trait BsonDocumentHandlerMacrosImpl
               } yield cache.toValDefs.use(_ => result)
             }
 
-          val ctx = DerivationCtx.from[A](derivedType = selfType)
+          val ctx = DerivationCtx.from[A](
+            derivedType = selfType
+          )
           fromCtx(ctx)
         }
       }
@@ -975,8 +948,8 @@ trait BsonDocumentHandlerMacrosImpl
           Log.error(err.message) >> MIO.fail(err)
 
         case Some(childrenNel) =>
-          val discriminatorField = configValues.discriminatorFieldName
-          val discriminatorFieldExpr = Expr(discriminatorField)
+          // TODO: Wire discriminator field name from config
+          val discriminatorFieldExpr: Expr[String] = Expr("className")
           val knownNames: String = childrenList.map(_._1).mkString(", ")
           val knownNamesExpr = Expr(knownNames)
 
