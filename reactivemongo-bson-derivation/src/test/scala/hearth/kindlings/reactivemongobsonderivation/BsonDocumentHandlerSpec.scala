@@ -288,6 +288,25 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val result = handler.readDocument(written).get
         assertEquals(result, Foo)
       }
+
+      test("snake_case field name mapper") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withSnakeCaseFieldNames
+
+        val handler = KindlingsBsonDocumentHandler.derived[CamelCaseFields]
+        val value = CamelCaseFields("Alice", "Smith", 30)
+
+        // Write should use snake_case keys
+        val written = handler.writeTry(value).get
+        assertEquals(written.get("first_name").map(_.asInstanceOf[BSONString].value), Some("Alice"))
+        assertEquals(written.get("last_name").map(_.asInstanceOf[BSONString].value), Some("Smith"))
+        assertEquals(written.get("age_in_years").map(_.asInstanceOf[BSONInteger].value), Some(30))
+        // Original camelCase keys should NOT be present
+        assert(written.get("firstName").isEmpty, "firstName should be mapped to first_name")
+
+        // Read should also use snake_case keys
+        val read = handler.readDocument(written).get
+        assertEquals(read, value)
+      }
     }
 
   }

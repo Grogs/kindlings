@@ -46,10 +46,35 @@ trait BsonDocumentHandlerMacrosImpl
 
   // Field name resolution
 
-  private def resolveFieldName(fieldName: String, param: Parameter): String = {
+  /** Build the BSON key expression for a field, applying the `@fieldName` annotation and the config's `fieldNameMapper`
+    * (at compile time if available, runtime otherwise).
+    */
+  private def resolveFieldKeyExpr[A](
+      fieldName: String,
+      param: Parameter,
+      ctx: DerivationCtx[A]
+  ): Expr[String] = {
     implicit val fnt: Type[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName] = Types.fieldNameAnn
-    getAnnotationStringArg[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName](param)
-      .getOrElse(fieldName)
+    val annotationOverride: Option[String] =
+      getAnnotationStringArg[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName](param)
+
+    annotationOverride match {
+      case Some(name) =>
+        // @fieldName annotation takes precedence — use as-is
+        Expr(name)
+      case None =>
+        // Apply config's fieldNameMapper
+        ctx.evaluatedConfig match {
+          case Some(evalCfg) =>
+            // semiEval succeeded — apply mapper at compile time
+            Expr(evalCfg.fieldNameMapper(fieldName))
+          case None =>
+            // semiEval failed — splice config at runtime
+            Expr.quote {
+              Expr.splice(ctx.config).fieldNameMapper(Expr.splice(Expr(fieldName)))
+            }
+        }
+    }
   }
 
   // Entrypoints
@@ -718,7 +743,7 @@ trait BsonDocumentHandlerMacrosImpl
         param: Parameter,
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[Any]]] = {
-      val fNameExpr: Expr[String] = Expr(resolveFieldName(fName, param))
+      val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
 
       Type[Field] match {
         case IsOption(isOption) =>
@@ -800,7 +825,7 @@ trait BsonDocumentHandlerMacrosImpl
         fieldValue: Expr[Field],
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[Option[reactivemongo.api.bson.BSONElement]]]] = {
-      val fNameExpr: Expr[String] = Expr(resolveFieldName(fName, param))
+      val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
 
       Type[Field] match {
         case IsOption(isOption) =>
