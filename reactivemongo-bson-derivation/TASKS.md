@@ -89,10 +89,10 @@ Current state:
 - [x] Align default discriminator with ReactiveMongo-BSON (`"className"`)
 - [x] Extract magic strings/numbers to constants (`BsonDocumentHandlerConfig.defaultDiscriminatorFieldName`)
 - [x] Add test for custom discriminator (passes)
-- [ ] Wire fieldNameMapper from config
-- [ ] Wire skipUnexpectedFields from config
-- [ ] Add test for fieldNameMapper
-- [ ] Add test for skipUnexpectedFields
+- [x] Wire fieldNameMapper from config
+- [x] Add test for fieldNameMapper (snake_case, passes)
+- [x] Add test for skipUnexpectedFields=true (passes — default behavior is correct)
+- [ ] Wire skipUnexpectedFields=false (deferred — hit Hearth `Expr.quote` limitations on building function expressions; needs different approach)
 
 ---
 
