@@ -37,10 +37,10 @@ final case class BsonDocumentHandlerConfig(
 
 object BsonDocumentHandlerConfig {
 
-  implicit val default: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig()
-
   /** Default discriminator field name, aligned with ReactiveMongo-BSON's `MacroConfiguration.defaultDiscriminator` */
   val defaultDiscriminatorFieldName: Option[String] = Some("className")
+
+  implicit val default: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig()
 
   private[reactivemongobsonderivation] val snakeCase: String => String = { s =>
     val sb = new StringBuilder

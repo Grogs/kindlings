@@ -57,8 +57,10 @@ trait BsonDocumentHandlerMacrosImpl
   def deriveTypeClass[A: Type](
       configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentHandler[A]] = {
-    val _ = configExpr // Parameter reserved for future config support
     val selfType: Option[??] = Some(Type[A].as_??)
+    // semiEval fails on configs with function fields, so don't use it for now
+    // TODO: Re-enable once we figure out how to handle function fields in semiEval
+    val evaluatedConfig: Option[BsonDocumentHandlerConfig] = None
 
     if (Type[A] =:= Type.of[Nothing].asInstanceOf[Type[A]] || Type[A] =:= Type.of[Any].asInstanceOf[Type[A]])
       Environment.reportErrorAndAbort(
@@ -82,7 +84,9 @@ trait BsonDocumentHandlerMacrosImpl
             }
 
           val ctx = DerivationCtx.from[A](
-            derivedType = selfType
+            derivedType = selfType,
+            config = configExpr,
+            evaluatedConfig = evaluatedConfig
           )
           fromCtx(ctx)
         }
@@ -137,10 +141,18 @@ trait BsonDocumentHandlerMacrosImpl
   final case class DerivationCtx[A](
       tpe: Type[A],
       cache: MLocal[ValDefsCache],
-      derivedType: Option[??]
+      derivedType: Option[??],
+      config: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
   ) {
 
-    def nest[B: Type]: DerivationCtx[B] = copy(tpe = Type[B])
+    def nest[B: Type]: DerivationCtx[B] = DerivationCtx(
+      tpe = Type[B],
+      cache = cache,
+      derivedType = derivedType,
+      config = config,
+      evaluatedConfig = evaluatedConfig
+    )
 
     def getInstance[B: Type]: MIO[Option[Expr[KindlingsBsonDocumentHandler[B]]]] = {
       implicit val HandlerB: Type[KindlingsBsonDocumentHandler[B]] = Types.BsonDocumentHandler[B]
@@ -176,8 +188,18 @@ trait BsonDocumentHandlerMacrosImpl
   }
 
   object DerivationCtx {
-    def from[A: Type](derivedType: Option[??]): DerivationCtx[A] =
-      DerivationCtx(tpe = Type[A], cache = ValDefsCache.mlocal, derivedType = derivedType)
+    def from[A: Type](
+        derivedType: Option[??],
+        config: Expr[BsonDocumentHandlerConfig],
+        evaluatedConfig: Option[BsonDocumentHandlerConfig]
+    ): DerivationCtx[A] =
+      DerivationCtx(
+        tpe = Type[A],
+        cache = ValDefsCache.mlocal,
+        derivedType = derivedType,
+        config = config,
+        evaluatedConfig = evaluatedConfig
+      )
   }
 
   def ctx[A](implicit A: DerivationCtx[A]): DerivationCtx[A] = A
@@ -948,8 +970,22 @@ trait BsonDocumentHandlerMacrosImpl
           Log.error(err.message) >> MIO.fail(err)
 
         case Some(childrenNel) =>
-          // TODO: Wire discriminator field name from config
-          val discriminatorFieldExpr: Expr[String] = Expr("className")
+          // Extract discriminator field name at compile time if possible, otherwise use default
+          // We don't try to splice the config at runtime because it contains function fields
+          // that can't be properly serialized in the generated code
+          val discriminatorFieldExpr: Expr[String] =
+            ctx.evaluatedConfig.flatMap(_.discriminatorFieldName) match {
+              case Some(discriminator) =>
+                // semiEval succeeded and discriminator is set, use compile-time constant
+                Expr(discriminator)
+              case None =>
+                // semiEval failed or discriminator not set, splice config at runtime
+                // Capture config in a local val to ensure proper initialization
+                Expr.quote {
+                  val config = Expr.splice(ctx.config)
+                  config.discriminatorFieldName.getOrElse("className")
+                }
+            }
           val knownNames: String = childrenList.map(_._1).mkString(", ")
           val knownNamesExpr = Expr(knownNames)
 
