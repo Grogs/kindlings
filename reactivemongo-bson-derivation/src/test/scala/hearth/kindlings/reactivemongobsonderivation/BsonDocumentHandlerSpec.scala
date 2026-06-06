@@ -172,6 +172,16 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(value).get
         assertEquals(handler.readDocument(written).get, value)
       }
+
+      test("Map[String, Int]") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithMap] = KindlingsBsonDocumentHandler.derived[WithMap]
+
+        val value = WithMap(Map("a" -> 1, "b" -> 2))
+
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
     }
 
     group("value types") {

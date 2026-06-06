@@ -1,17 +1,19 @@
 package hearth.kindlings.reactivemongobsonderivation
 
-/**
- * Configuration for BSONDocumentHandler derivation.
- *
- * @param fieldNameMapper Function to transform field names (default: identity)
- * @param discriminatorFieldName The field name used for sealed trait/enum discrimination
- *                               (None = wrapper-style, Some(name) = discriminator-style, default: Some("_type"))
- * @param skipUnexpectedFields If true, skip unknown fields during decoding (default: true)
- */
+/** Configuration for BSONDocumentHandler derivation.
+  *
+  * @param fieldNameMapper
+  *   Function to transform field names (default: identity)
+  * @param discriminatorFieldName
+  *   The field name used for sealed trait/enum discrimination (None = wrapper-style, Some(name) = discriminator-style,
+  *   default: Some("_type"))
+  * @param skipUnexpectedFields
+  *   If true, skip unknown fields during decoding (default: true)
+  */
 final case class BsonDocumentHandlerConfig(
-  fieldNameMapper: String => String = identity,
-  discriminatorFieldName: Option[String] = Some("_type"),
-  skipUnexpectedFields: Boolean = true
+    fieldNameMapper: String => String = identity,
+    discriminatorFieldName: Option[String] = Some("_type"),
+    skipUnexpectedFields: Boolean = true
 ) {
 
   def withFieldNameMapper(f: String => String): BsonDocumentHandlerConfig =

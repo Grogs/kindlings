@@ -19,6 +19,7 @@ final case class WithList(names: List[String])
 final case class WithSeq(scores: Seq[Int])
 final case class WithVector(tags: Vector[String])
 final case class WithSet(unique: Set[Int])
+final case class WithMap(items: Map[String, Int])
 
 // Value types (AnyVal)
 final case class WrapperId(value: Int) extends AnyVal
