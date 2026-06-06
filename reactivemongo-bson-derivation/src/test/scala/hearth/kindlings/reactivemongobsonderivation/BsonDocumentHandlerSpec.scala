@@ -307,6 +307,16 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val read = handler.readDocument(written).get
         assertEquals(read, value)
       }
+
+      test("skipUnexpectedFields=true ignores unknown fields") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = true)
+
+        val handler = KindlingsBsonDocumentHandler.derived[Person]
+        val doc = BSONDocument("name" -> "Alice", "age" -> 30, "extra" -> "ignored", "another" -> 42)
+
+        val result = handler.readDocument(doc).get
+        assertEquals(result, Person("Alice", 30))
+      }
     }
 
   }
