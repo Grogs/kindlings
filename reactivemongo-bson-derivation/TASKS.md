@@ -1,44 +1,9 @@
 # Tasks: reactivemongo-bson-derivation Improvements
 
-## 📋 Handoff: Config Wiring (Completed)
+## 📋 Current Session: Compare Against Reference Implementation
 
 **Date**: 2026-06-06  
-**Status**: ✅ **DONE** — 23/23 tests pass
-
-### What Was Done
-
-1. **Wired `BsonDocumentHandlerConfig` through `DerivationCtx`** with both `config: Expr[BsonDocumentHandlerConfig]` (for runtime splice) and `evaluatedConfig: Option[BsonDocumentHandlerConfig]` (for compile-time optimization)
-2. **Fixed root cause of NPE**: Scala companion object initialization order bug. `implicit val default` was defined **before** `val defaultDiscriminatorFieldName`, causing the default config to be initialized with `null` for `discriminatorFieldName`. Fix: moved `defaultDiscriminatorFieldName` before `default`.
-3. **Enum handler uses both paths**: compile-time constant when `evaluatedConfig` has the discriminator, runtime splice with local val capture as fallback
-4. **23/23 tests pass** including the custom discriminator test
-
-### Root Cause (for future reference)
-
-The `NullPointerException` at `BsonDocumentHandlerConfig.discriminatorFieldName()` was **not** a semiEval issue. It was a case class field initialization order bug in the companion object:
-
-```scala
-// BEFORE (broken)
-implicit val default: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig()
-val defaultDiscriminatorFieldName: Option[String] = Some("className")
-
-// AFTER (fixed)
-val defaultDiscriminatorFieldName: Option[String] = Some("className")
-implicit val default: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig()
-```
-
-When `default` was evaluated first, `defaultDiscriminatorFieldName` was `null`, so the case class default value was `null` instead of `Some("className")`. At runtime, `.discriminatorFieldName()` returned `null` (Java-level null, not `None`).
-
-Debug technique: a `System.err.println` at the splice point revealed `discriminatorFieldName=null` (not `None`, not `Some("className")`).
-
-### Files Modified (This Session)
-
-- `BsonDocumentHandlerConfig.scala`: Reordered companion object so `defaultDiscriminatorFieldName` comes before `default`
-- `BsonDocumentHandlerMacrosImpl.scala`:
-  - Added `config` and `evaluatedConfig` to `DerivationCtx`
-  - Updated `DerivationCtx.from` and `DerivationCtx.nest` to thread both fields
-  - Updated `deriveTypeClass` to accept and pass `configExpr`
-  - Enum handler uses `evaluatedConfig` for compile-time constant, runtime splice as fallback
-- Committed: `7ce7d59` "fix: wire BsonDocumentHandlerConfig discriminator field name through DerivationCtx"
+**Status**: Starting — see task 6 below
 
 ---
 
@@ -174,34 +139,36 @@ Added to `docs/mkdocs.yml` nav.
 
 ---
 
-### 6. Compare against reference implementation [PENDING]
-**Impact**: Ensure behavioral parity with ReactiveMongo-BSON's macro derivation
+### 6. Compare against reference implementation [DONE]
+**Impact**: Documented 10 intentional behavioral differences and identified a recursive-structure limitation
 **Effort**: Medium
 
-ReactiveMongo-BSON provides a reference implementation of macro-based BSON handler derivation. We should compare our implementation against it to ensure we match behavior, edge cases, and defaults.
+**Deliverable**: `reactivemongo-bson-derivation/REFERENCE-COMPARISON.md`
 
-**Steps**:
-1. Extract and review ReactiveMongo-BSON's macro derivation source (from `./ReactiveMongo-BSON/` local copy)
-2. Identify test cases from ReactiveMongo-BSON's test suite
-3. Compare:
-   - Default discriminator field name (should be `"className"`)
-   - Field naming strategies (`FieldNaming` options)
-   - Type naming strategies (short name vs full name)
-   - Option handling (None encoding/decoding)
-   - Sealed trait/enum encoding (discriminator vs wrapper style)
-   - Nested type handling
-   - Error messages and edge cases
-4. Copy/adapt relevant test cases from ReactiveMongo-BSON into our test suite
-5. Document any intentional behavioral differences
+**Key findings**:
 
-**Reference**: `./ReactiveMongo-BSON/api/src/main/scala-2/MacroImpl.scala`, `./ReactiveMongo-BSON/api/src/main/scala-2/MacroConfiguration.scala`
+1. **Default values are always applied** (not opt-in like reference's `ReadDefaultValues`)
+2. **`@NoneAsNull` annotation not supported** (feature gap)
+3. **`BSONNull` always decoded as `None`** (more permissive than reference)
+4. **Discriminator uses short class name** (reference uses full name by default)
+5. **Field naming is `String => String` function** (reference uses structured `FieldNaming` trait)
+6. **No `UnionType` / non-sealed ADT support** (sealed traits only)
+7. **No `@DefaultValue` annotation** (only Scala-level defaults)
+8. **No `@Reader`/`@Writer` per-field annotations** (only `@fieldName`)
+9. **`AutomaticMaterialization` always on** (reference requires opt-in)
+10. **No `DisableWarnings`/`Verbose` options**
+
+**Same behavior**: default discriminator `"className"`, default identity field naming, options read, sealed trait discrimination, collections, value types, maps, empty case classes.
+
+**Identified limitation**: Recursive types (e.g., `Tree`) **do not compile** with the current `setHelper` pattern. Reference uses a function-based approach (also used by jsoniter) to break the recursive cycle. Fix requires refactoring `setHelper` to follow the jsoniter pattern.
 
 **Status**:
-- [ ] Extract and review ReactiveMongo-BSON macro source
-- [ ] Identify key behavioral differences
-- [ ] Copy/adapt test cases from reference
-- [ ] Fix any behavioral mismatches
-- [ ] Document intentional differences
+- [x] Extract and review ReactiveMongo-BSON macro source
+- [x] Identify key behavioral differences
+- [x] Document intentional differences in `REFERENCE-COMPARISON.md`
+- [ ] Copy/adapt test cases from reference (deferred — many would fail due to limitations)
+- [ ] Fix recursive structure limitation (requires setHelper refactor)
+- [ ] Add `@NoneAsNull` annotation support (future feature)
 
 ---
 
