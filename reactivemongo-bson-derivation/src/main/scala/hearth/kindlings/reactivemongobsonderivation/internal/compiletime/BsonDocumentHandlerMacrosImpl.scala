@@ -364,9 +364,17 @@ trait BsonDocumentHandlerMacrosImpl
     ): MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] = {
       implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
       implicit val BsonArrayT: Type[reactivemongo.api.bson.BSONArray] = Types.BsonArray
+      implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
+      implicit val TryBsonDocumentT: Type[scala.util.Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+
+      import isCollection.CtorResult
+      val factoryExpr = isCollection.factory
+      val buildStep = isCollection.build
 
       deriveResultRecursively[Item](using ctx.nest[Item]).flatMap { innerHandlerExpr =>
-        LambdaBuilder
+        // Build item-level read/write lambdas
+        val readItemIO = LambdaBuilder
           .of1[reactivemongo.api.bson.BSONValue]("bsonValue")
           .traverse { bsonValueExpr =>
             MIO.pure(Expr.quote {
@@ -377,59 +385,81 @@ trait BsonDocumentHandlerMacrosImpl
                 .get
             })
           }
-          .flatMap { readItemBuilder =>
-            val readItemFn = readItemBuilder.build[Item]
-            LambdaBuilder
-              .of1[Item]("item")
-              .traverse { itemExpr =>
-                MIO.pure(Expr.quote {
-                  Expr
-                    .splice(innerHandlerExpr)
-                    .asInstanceOf[reactivemongo.api.bson.BSONWriter[Item]]
-                    .writeTry(Expr.splice(itemExpr))
-                    .get
-                })
-              }
-              .flatMap { writeItemBuilder =>
-                val writeItemFn = writeItemBuilder.build[reactivemongo.api.bson.BSONValue]
-                val handlerExpr = Expr.quote {
-                  new KindlingsBsonDocumentHandler[A] {
-                    def readDocument(doc: BSONDocument): scala.util.Try[A] = {
-                      val readItem = Expr.splice(readItemFn)
-                      doc.get("values") match {
-                        case Some(arr: reactivemongo.api.bson.BSONArray) =>
-                          val acc = scala.collection.mutable.ListBuffer.empty[Item]
-                          var err: Throwable = null
-                          val iter = arr.values.iterator
-                          while (err == null && iter.hasNext)
-                            try acc += readItem(iter.next())
-                            catch { case e: Exception => err = e }
-                          if (err != null) scala.util.Failure(err).asInstanceOf[scala.util.Try[A]]
-                          else scala.util.Success(acc.result().asInstanceOf[A])
-                        case _ =>
-                          scala.util.Failure(new IllegalArgumentException("Expected BSONArray in 'values' field"))
-                      }
-                    }
-                    def writeTry(value: A): scala.util.Try[BSONDocument] = {
-                      val writeItem = Expr.splice(writeItemFn)
-                      val iterable = Expr
-                        .splice(isCollection.asIterable(Expr.quote(value).asInstanceOf[Expr[A]]))
-                        .asInstanceOf[Iterable[Item]]
-                      val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONValue]
-                      var err: Throwable = null
-                      val iter = iterable.iterator
-                      while (err == null && iter.hasNext)
-                        try builder += writeItem(iter.next())
-                        catch { case e: Exception => err = e }
-                      if (err != null) scala.util.Failure(err)
-                      else
-                        scala.util.Success(BSONDocument("values" -> reactivemongo.api.bson.BSONArray(builder.result())))
-                    }
-                  }
-                }
-                MIO.pure(Rule.matched(handlerExpr))
-              }
+          .map(_.build[Item])
+
+        val writeItemIO = LambdaBuilder
+          .of1[Item]("item")
+          .traverse { itemExpr =>
+            MIO.pure(Expr.quote {
+              Expr
+                .splice(innerHandlerExpr)
+                .asInstanceOf[reactivemongo.api.bson.BSONWriter[Item]]
+                .writeTry(Expr.splice(itemExpr))
+                .get
+            })
           }
+          .map(_.build[reactivemongo.api.bson.BSONValue])
+
+        def buildCollectionReadExpr(
+            readItemFn: Expr[reactivemongo.api.bson.BSONValue => Item]
+        ) =
+          LambdaBuilder.of1[BSONDocument]("doc").traverse { docExpr =>
+            val readLoop: Expr[scala.collection.mutable.Builder[Item, CtorResult]] = Expr.quote {
+              val readItem = Expr.splice(readItemFn)
+              val collBuilder = Expr.splice(factoryExpr).newBuilder
+              Expr.splice(docExpr).get("values") match {
+                case Some(arr: reactivemongo.api.bson.BSONArray) =>
+                  var err: Throwable = null
+                  var i = 0
+                  val values = arr.values
+                  while (err == null && i < values.length) {
+                    try collBuilder += readItem(values(i))
+                    catch { case e: Exception => err = e }
+                    i += 1
+                  }
+                  if (err != null) throw err
+                case _ =>
+                  throw new IllegalArgumentException("Expected BSONArray in 'values' field")
+              }
+              collBuilder
+            }
+            val buildResultExpr = buildStep.ctor(readLoop)
+            collectBuildResult[A](buildStep, buildResultExpr.asInstanceOf[Expr[Any]])
+          }
+
+        def buildCollectionWriteExpr(
+            writeItemFn: Expr[Item => reactivemongo.api.bson.BSONValue]
+        ) =
+          LambdaBuilder.of1[A]("value").traverse { valueExpr =>
+            MIO.pure(Expr.quote {
+              val writeItem = Expr.splice(writeItemFn)
+              val iterable = Expr
+                .splice(isCollection.asIterable(valueExpr))
+                .asInstanceOf[Iterable[Item]]
+              val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONValue]
+              var err: Throwable = null
+              val iter = iterable.iterator
+              while (err == null && iter.hasNext)
+                try builder += writeItem(iter.next())
+                catch { case e: Exception => err = e }
+              if (err != null) scala.util.Failure(err)
+              else
+                scala.util.Success(BSONDocument("values" -> reactivemongo.api.bson.BSONArray(builder.result())))
+            })
+          }
+
+        for {
+          readItemFn <- readItemIO
+          writeItemFn <- writeItemIO
+          readLambda <- buildCollectionReadExpr(readItemFn).map(_.build[scala.util.Try[A]])
+          writeLambda <- buildCollectionWriteExpr(writeItemFn).map(_.build[scala.util.Try[BSONDocument]])
+        } yield Rule.matched(Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+            .handlerInstance[A](
+              readFn = Expr.splice(readLambda),
+              writeFn = Expr.splice(writeLambda)
+            )
+        })
       }
     }
 
@@ -437,48 +467,141 @@ trait BsonDocumentHandlerMacrosImpl
         isMap: IsMapOf[A, Pair]
     ): MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] = {
       implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
-      deriveResultRecursively[Any](using ctx.nest(using Types.Any)).flatMap { valueHandlerExpr =>
-        val handlerExpr = Expr.quote {
-          new KindlingsBsonDocumentHandler[A] {
-            def readDocument(doc: BSONDocument): scala.util.Try[A] = {
-              val valueReader = Expr.splice(valueHandlerExpr).asInstanceOf[reactivemongo.api.bson.BSONReader[Any]]
-              val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONElement]
+      implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val StringT: Type[String] = Types.String
+      implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
+      implicit val TryBsonDocumentT: Type[scala.util.Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+
+      import isMap.{Key, Value, CtorResult}
+      val factoryExpr = isMap.factory
+      val buildStep = isMap.build
+
+      // Derive handler for the map's VALUE type (not Any!)
+      deriveResultRecursively[Value](using ctx.nest[Value]).flatMap { valueHandlerExpr =>
+        // Build the read lambda: BSONDocument => Try[A]
+        val readLambdaIO = LambdaBuilder
+          .of1[BSONDocument]("doc")
+          .traverse { docExpr =>
+            val readLoop: Expr[scala.collection.mutable.Builder[Pair, CtorResult]] = Expr.quote {
+              val valueReader =
+                Expr.splice(valueHandlerExpr).asInstanceOf[reactivemongo.api.bson.BSONReader[Value]]
+              val mapBuilder = Expr.splice(factoryExpr).newBuilder
               var err: Throwable = null
-              val iter = doc.elements.iterator
+              val iter = Expr.splice(docExpr).elements.iterator
               while (err == null && iter.hasNext) {
                 val el = iter.next()
                 valueReader.readTry(el.value) match {
-                  case scala.util.Success(v) => builder += reactivemongo.api.bson.BSONElement(el.name, el.value)
+                  case scala.util.Success(v) =>
+                    mapBuilder += Expr.splice(
+                      isMap.pair(
+                        Expr.quote(el.name.asInstanceOf[Key]),
+                        Expr.quote(v)
+                      )
+                    )
                   case scala.util.Failure(e) => err = e
                 }
               }
-              if (err != null) scala.util.Failure(err).asInstanceOf[scala.util.Try[A]]
-              else scala.util.Success(reactivemongo.api.bson.BSONDocument(builder.result()*).asInstanceOf[A])
+              if (err != null) throw err
+              mapBuilder
             }
-            def writeTry(value: A): scala.util.Try[BSONDocument] = {
-              val valueWriter = Expr.splice(valueHandlerExpr).asInstanceOf[reactivemongo.api.bson.BSONWriter[Any]]
+            val buildResultExpr = buildStep.ctor(readLoop)
+            collectBuildResult[A](buildStep, buildResultExpr.asInstanceOf[Expr[Any]])
+          }
+          .map(_.build[scala.util.Try[A]])
+
+        // Build the write lambda: A => Try[BSONDocument]
+        val writeLambdaIO = LambdaBuilder
+          .of1[A]("value")
+          .traverse { valueExpr =>
+            MIO.pure(Expr.quote {
+              val valueWriter =
+                Expr.splice(valueHandlerExpr).asInstanceOf[reactivemongo.api.bson.BSONWriter[Value]]
               val iterable =
-                Expr.splice(isMap.asIterable(Expr.quote(value).asInstanceOf[Expr[A]])).asInstanceOf[Iterable[Any]]
-              val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONElement]
+                Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
+              val elements = scala.collection.mutable.ListBuffer
+                .empty[reactivemongo.api.bson.BSONElement]
               var err: Throwable = null
               val iter = iterable.iterator
               while (err == null && iter.hasNext) {
-                val pair = iter.next().asInstanceOf[(String, Any)]
+                val pair = iter.next()
                 valueWriter.writeTry(pair._2) match {
                   case scala.util.Success(bson) =>
-                    builder += reactivemongo.api.bson
-                      .BSONElement(pair._1, bson.asInstanceOf[reactivemongo.api.bson.BSONValue])
+                    elements += reactivemongo.api.bson
+                      .BSONElement(pair._1.asInstanceOf[String], bson.asInstanceOf[reactivemongo.api.bson.BSONValue])
                   case scala.util.Failure(e) => err = e
                 }
               }
               if (err != null) scala.util.Failure(err)
-              else scala.util.Success(BSONDocument(builder.result()*))
-            }
+              else scala.util.Success(BSONDocument(elements.result()*))
+            })
           }
-        }
-        MIO.pure(Rule.matched(handlerExpr))
+          .map(_.build[scala.util.Try[BSONDocument]])
+
+        for {
+          readLambda <- readLambdaIO
+          writeLambda <- writeLambdaIO
+        } yield Rule.matched(Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+            .handlerInstance[A](
+              readFn = Expr.splice(readLambda),
+              writeFn = Expr.splice(writeLambda)
+            )
+        })
       }
     }
+
+    /** Converts a CtorResult expression to a Try[A] expression based on the build step variant. */
+    private def collectBuildResult[A: Type](
+        buildStep: CtorLikeOf[?, A],
+        buildResultExpr: Expr[Any]
+    )(implicit TryAT: Type[scala.util.Try[A]]): MIO[Expr[scala.util.Try[A]]] =
+      MIO.pure(buildStep match {
+        case _: CtorLikeOf.PlainValue[?, ?] =>
+          Expr.quote {
+            try scala.util.Success(Expr.splice(buildResultExpr).asInstanceOf[A])
+            catch { case e: Throwable => scala.util.Failure(e) }
+          }
+        case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
+          val eitherExpr = buildResultExpr.asInstanceOf[Expr[Either[String, A]]]
+          Expr.quote {
+            try
+              Expr.splice(eitherExpr) match {
+                case Right(v)     => scala.util.Success(v)
+                case Left(errMsg) => scala.util.Failure(new IllegalArgumentException(errMsg))
+              }
+            catch { case e: Throwable => scala.util.Failure(e) }
+          }
+        case _: CtorLikeOf.EitherThrowableOrValue[?, ?] =>
+          val eitherExpr = buildResultExpr.asInstanceOf[Expr[Either[Throwable, A]]]
+          Expr.quote {
+            try
+              Expr.splice(eitherExpr) match {
+                case Right(v)  => scala.util.Success(v)
+                case Left(err) => scala.util.Failure(err)
+              }
+            catch { case e: Throwable => scala.util.Failure(e) }
+          }
+        case _: CtorLikeOf.EitherIterableStringOrValue[?, ?] =>
+          val eitherExpr = buildResultExpr.asInstanceOf[Expr[Either[Iterable[String], A]]]
+          Expr.quote {
+            try
+              Expr.splice(eitherExpr) match {
+                case Right(v)   => scala.util.Success(v)
+                case Left(errs) => scala.util.Failure(new IllegalArgumentException(errs.mkString(", ")))
+              }
+            catch { case e: Throwable => scala.util.Failure(e) }
+          }
+        case _: CtorLikeOf.EitherIterableThrowableOrValue[?, ?] =>
+          val eitherExpr = buildResultExpr.asInstanceOf[Expr[Either[Iterable[Throwable], A]]]
+          Expr.quote {
+            try
+              Expr.splice(eitherExpr) match {
+                case Right(v)   => scala.util.Success(v)
+                case Left(errs) => scala.util.Failure(errs.headOption.getOrElse(new RuntimeException("unknown")))
+              }
+            catch { case e: Throwable => scala.util.Failure(e) }
+          }
+      })
   }
 
   object HandleAsOptionRule extends DerivationRule("handle as Option") {
