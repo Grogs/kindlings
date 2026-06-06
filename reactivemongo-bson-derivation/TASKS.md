@@ -91,8 +91,8 @@ Current state:
 - [x] Add test for custom discriminator (passes)
 - [x] Wire fieldNameMapper from config
 - [x] Add test for fieldNameMapper (snake_case, passes)
-- [x] Add test for skipUnexpectedFields=true (passes — default behavior is correct)
-- [ ] Wire skipUnexpectedFields=false (deferred — hit Hearth `Expr.quote` limitations on building function expressions; needs different approach)
+- [x] Wire skipUnexpectedFields from config
+- [x] Add test for skipUnexpectedFields=true and =false (both pass)
 
 ---
 
