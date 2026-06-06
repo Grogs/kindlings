@@ -77,6 +77,74 @@ trait BsonDocumentHandlerMacrosImpl
     }
   }
 
+  /** Try to extract the underlying String from an Expr[String] if it's a literal. */
+  private def extractStringLiteral(expr: Expr[String]): Option[String] = expr.value
+
+  /** Build an expression that checks for unexpected fields in the BSON document.
+    *
+    * If all known keys are compile-time string literals and `skipUnexpectedFields=false`, we pre-compute the known set
+    * at compile time. Otherwise, we fall back to a no-op (skipUnexpectedFields=true is the safe default).
+    */
+  private def buildUnexpectedFieldsCheck[A](
+      docExpr: Expr[reactivemongo.api.bson.BSONDocument],
+      knownKeyExprs: List[Expr[String]],
+      ctx: DerivationCtx[A]
+  )(implicit StringT: Type[String]): Expr[scala.util.Try[Unit]] = {
+    val allLiteralKeys: Option[Set[String]] =
+      knownKeyExprs.foldLeft(Option(Set.empty[String])) { (acc, expr) =>
+        acc.flatMap(s => extractStringLiteral(expr).map(s + _))
+      }
+    ctx.evaluatedConfig match {
+      case Some(evalCfg) if evalCfg.skipUnexpectedFields =>
+        // Config fully evaluated at compile time and skipping is enabled — no-op
+        Expr.quote(scala.util.Success(()): scala.util.Try[Unit])
+      case _ if allLiteralKeys.isDefined =>
+        // All known keys are compile-time literals — pre-compute the set
+        val knownKeys = allLiteralKeys.get
+        val knownKeysExpr: Expr[scala.collection.immutable.Set[String]] = Expr(knownKeys)
+        // Check the config at runtime to decide whether to skip
+        Expr.quote {
+          if (Expr.splice(ctx.config).skipUnexpectedFields)
+            scala.util.Success(()): scala.util.Try[Unit]
+          else {
+            val unexpected = Expr.splice(docExpr).elements.map(_.name).toSet.diff(Expr.splice(knownKeysExpr))
+            if (unexpected.nonEmpty)
+              scala.util.Failure(
+                new IllegalArgumentException("Unexpected field(s): " + unexpected.mkString(", "))
+              ): scala.util.Try[Unit]
+            else
+              scala.util.Success(()): scala.util.Try[Unit]
+          }
+        }
+      case _ =>
+        // Some keys are runtime expressions — build the set at the macro level
+        // First, build the known keys set by folding Expr.quote expressions
+        val emptySetExpr: Expr[scala.collection.immutable.Set[String]] =
+          Expr(scala.collection.immutable.Set.empty[String])
+        val knownKeysSetExpr: Expr[scala.collection.immutable.Set[String]] =
+          if (knownKeyExprs.isEmpty) emptySetExpr
+          else
+            knownKeyExprs.foldLeft(emptySetExpr) { (acc, keyExpr) =>
+              Expr.quote(Expr.splice(acc) + Expr.splice(keyExpr))
+            }
+        // Check the config at runtime to decide whether to skip
+        Expr.quote {
+          if (Expr.splice(ctx.config).skipUnexpectedFields)
+            scala.util.Success(()): scala.util.Try[Unit]
+          else {
+            val known = Expr.splice(knownKeysSetExpr)
+            val unexpected = Expr.splice(docExpr).elements.map(_.name).toSet.diff(known)
+            if (unexpected.nonEmpty)
+              scala.util.Failure(
+                new IllegalArgumentException("Unexpected field(s): " + unexpected.mkString(", "))
+              ): scala.util.Try[Unit]
+            else
+              scala.util.Success(()): scala.util.Try[Unit]
+          }
+        }
+    }
+  }
+
   // Entrypoints
 
   def deriveTypeClass[A: Type](
@@ -916,15 +984,26 @@ trait BsonDocumentHandlerMacrosImpl
                   }
                   .map(_.build[A])
               } yield {
+                implicit val StringT: Type[String] = Types.String
                 val listExpr = fieldReads.toList.foldRight(Expr.quote(List.empty[Try[Any]])) { case (read, acc) =>
                   Expr.quote(Expr.splice(read) :: Expr.splice(acc))
                 }
+                // Build the unexpected fields check (no-op when skipUnexpectedFields=true or all keys are literals)
+                val knownKeyExprs: List[Expr[String]] = fieldsList.map { case (fName, param) =>
+                  resolveFieldKeyExpr(fName, param, ctx)
+                }
+                val unexpectedCheckExpr: Expr[scala.util.Try[Unit]] = buildUnexpectedFieldsCheck(
+                  docExpr,
+                  knownKeyExprs,
+                  ctx
+                )
                 Expr.quote {
                   hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
                     .sequenceTries[A](
                       Expr.splice(listExpr),
                       Expr.splice(constructLambda)
                     )
+                    .flatMap(a => Expr.splice(unexpectedCheckExpr).map(_ => a))
                 }
               }
             }
