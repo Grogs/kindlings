@@ -65,6 +65,7 @@ nav:
       - "Mocking (ScalaMock-style)": "mock.md"
       - "Optics (quicklens-style lenses)": "optics.md"
       - "PureConfig": "pureconfig-derivation.md"
+      - "ReactiveMongo BSON": "reactivemongo-bson-derivation.md"
       - "ScalaCheck": "scalacheck-derivation.md"
       - "sconfig (HOCON)": "sconfig-derivation.md"
       - "Tapir Schema": "tapir-schema-derivation.md"

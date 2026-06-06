@@ -149,27 +149,28 @@ Current state: Scala 3 only
 
 ---
 
-### 5. Documentation [PENDING]
+### 5. Documentation [DONE]
 **Impact**: Help users understand and use the module
 **Effort**: Low
 
-Create user guide documentation:
+Created `docs/user-guide/reactivemongo-bson-derivation.md` with:
+- Installation
+- Quick start
+- Supported types table
+- Configuration (all three config fields with examples)
+- `@fieldName` annotation
+- Examples (sealed trait, collections/options, default values)
+- Limitations
 
-1. **Overview**: What types are supported (case classes, sealed traits, collections, maps, value types, options)
-2. **Quick start**: Basic usage with `KindlingsBsonDocumentHandler.derived[A]`
-3. **Configuration**: Using `BsonDocumentHandlerConfig` for custom discriminator names, field name mapping, skipUnexpectedFields
-4. **Annotations**: Using `@fieldName` for field name overrides
-5. **Examples**: Common patterns (nested types, collections, enums)
-6. **Limitations**: What's not supported yet
-7. **Migration**: Differences from reactivemongo's built-in derivation
+Added to `docs/mkdocs.yml` nav.
 
 **Status**:
-- [ ] Create `docs/user-guide/reactivemongo-bson.md`
-- [ ] Add overview and quick start
-- [ ] Document configuration options
-- [ ] Add examples
-- [ ] Document limitations
-- [ ] Add to mkdocs.yml navigation
+- [x] Create `docs/user-guide/reactivemongo-bson-derivation.md`
+- [x] Add overview and quick start
+- [x] Document configuration options
+- [x] Add examples
+- [x] Document limitations
+- [x] Add to mkdocs.yml navigation
 
 ---
 
