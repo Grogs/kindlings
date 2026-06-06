@@ -7,7 +7,7 @@ private[reactivemongobsonderivation] trait KindlingsBsonDocumentHandlerCompanion
     internal.compiletime.BsonDocumentHandlerMacros.deriveTypeClassImpl[A]
   }
 
-  inline given derivedConfig[A](using inline config: BsonDocumentHandlerConfig): KindlingsBsonDocumentHandler[A] = ${
+  inline given derivedConfig[A](using config: BsonDocumentHandlerConfig): KindlingsBsonDocumentHandler[A] = ${
     internal.compiletime.BsonDocumentHandlerMacros.deriveTypeClassImplWithConfig[A]('config)
   }
 }
