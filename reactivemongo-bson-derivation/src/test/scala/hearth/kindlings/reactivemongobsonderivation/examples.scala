@@ -41,3 +41,6 @@ sealed trait Expr
 case class Num(value: Int) extends Expr
 case class Str(value: String) extends Expr
 case object NoExpr extends Expr
+
+// Field name mapping
+final case class CamelCaseFields(firstName: String, lastName: String, ageInYears: Int)
