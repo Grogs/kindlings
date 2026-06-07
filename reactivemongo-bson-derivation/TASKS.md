@@ -1,9 +1,9 @@
 # Tasks: reactivemongo-bson-derivation Improvements
 
-## 📋 Current Session: Compare Against Reference Implementation
+## 📋 Current Session: Recursive Type Derivation + Collection Element Handling
 
-**Date**: 2026-06-06  
-**Status**: Starting — see task 6 below
+**Date**: 2026-06-07  
+**Status**: Done — see task 7 below
 
 ---
 
@@ -167,8 +167,43 @@ Added to `docs/mkdocs.yml` nav.
 - [x] Identify key behavioral differences
 - [x] Document intentional differences in `REFERENCE-COMPARISON.md`
 - [ ] Copy/adapt test cases from reference (deferred — many would fail due to limitations)
-- [ ] Fix recursive structure limitation (requires setHelper refactor)
+- [x] Fix recursive structure limitation (requires setHelper refactor) — see task 7
 - [ ] Add `@NoneAsNull` annotation support (future feature)
+
+---
+
+### 7. Recursive type derivation [DONE]
+**Impact**: Support recursive ADTs (e.g., `sealed trait Tree; case class Node(left: Tree, right: Tree)`)
+**Effort**: Medium
+
+**Problem**: The original `setHelper` evaluated the helper MIO immediately, so for a recursive type the inner summon of the same type failed because the helper was not yet registered.
+
+**Fix** (in `BsonDocumentHandlerMacrosImpl.scala`):
+
+1. **`setHelper` refactor** (line 308): Replaced eager `defBuilder.traverse(_ => helper)` + `buildCached` with `cache.buildCachedWith` wrapped in `MIO.scoped { runSafe => ... }`. This stores the helper MIO without evaluating it, so the body is evaluated later (when the def is emitted) — allowing recursive types to find the cached helper before its body is built.
+
+2. **`deriveResultRecursively` always uses helper** (line 359): Removed the `tryInlineLeafType` shortcut in the non-leaf path; all non-leaf types now go through `setHelper`/`getHelper`.
+
+3. **Trait-level helpers** (line 232): Moved `isCaseClassOrEnum`, `resolveBsonReader`, `resolveBsonWriter` to the trait level so they can be shared between `HandleAsCaseClassRule` and `HandleAsCollectionRule`.
+
+4. **Removed `HandleAsBuiltInRule`**: `KindlingsBsonDocumentHandler[A]` extends `BSONDocumentHandler[A]` whose `readTry` is final and only accepts `BSONDocument`. A document handler cannot serve value-level reads inside collections (e.g., reading a `BSONString` for a `List[String]` element). Primitive/scalar types are now handled via direct `BSONReader`/`BSONWriter` summoning in the collection/map handlers.
+
+5. **`deriveCollectionHandler` dual-path** (line 535): Uses `resolveBsonReader`/`resolveBsonWriter` so case classes/enums are derived recursively and other types (including primitives) summon their `BSONReader`/`BSONWriter` directly.
+
+6. **`deriveMapHandler` dual-path** (line 618): Same pattern for map values.
+
+7. **Test added**: `recursive structure (Tree)` in `BsonDocumentHandlerSpec.scala`.
+
+**Result**: All 27 tests pass, including `List[String]`, `Set[Int]`, `Map[String, Int]`, and `Tree`.
+
+**Status**:
+- [x] Refactor setHelper to use buildCachedWith
+- [x] Move helpers to trait level
+- [x] Remove HandleAsBuiltInRule
+- [x] Update deriveCollectionHandler to dual-path
+- [x] Update deriveMapHandler to dual-path
+- [x] Add Tree recursive test
+- [x] All 27 tests pass
 
 ---
 
@@ -189,3 +224,11 @@ Deleted 6 unused runtime helpers from `BsonDocumentHandlerFactories`:
 - Added `collectBuildResult` helper for all 5 `CtorLikeOf` variants
 - Added `Map[String, Int]` test
 - **22 tests passing**
+
+### ✅ Recursive type derivation (Task 7)
+- `setHelper` refactored to use `buildCachedWith` + `MIO.scoped` (jsoniter pattern)
+- Trait-level `isCaseClassOrEnum`, `resolveBsonReader`, `resolveBsonWriter` shared between rules
+- `HandleAsBuiltInRule` removed (architecturally wrong: `BSONDocumentHandler.readTry` is final and document-only)
+- `deriveCollectionHandler` and `deriveMapHandler` use dual-path resolution
+- Added `Tree` recursive test
+- **27 tests passing**
