@@ -166,9 +166,9 @@ Added to `docs/mkdocs.yml` nav.
 - [x] Extract and review ReactiveMongo-BSON macro source
 - [x] Identify key behavioral differences
 - [x] Document intentional differences in `REFERENCE-COMPARISON.md`
-- [ ] Copy/adapt test cases from reference (deferred — many would fail due to limitations)
+- [x] Copy/adapt test cases from reference (see task 8) — Seq[String], single-member case class, @defaultValue, @reader, @writer, @noneAsNull
 - [x] Fix recursive structure limitation (requires setHelper refactor) — see task 7
-- [ ] Add `@NoneAsNull` annotation support (future feature)
+- [x] Add `@NoneAsNull` annotation support — see task 8
 
 ---
 
@@ -211,7 +211,7 @@ Added to `docs/mkdocs.yml` nav.
 **Impact**: Closer feature parity with ReactiveMongo-BSON's macro; users can switch with less friction
 **Effort**: Medium
 
-Reference implementation supports several annotations and config options that ours doesn't (see `REFERENCE-COMPARISON.md` for the full list). Tackling them in order of user value, smallest first.
+Reference implementation supports several annotations and config options that ours doesn't (see `REFERENCE-COMPARISON.md` for the full list). Tackled in order of user value, smallest first.
 
 **Status**:
 - [x] Limitation #2: `@noneAsNull` annotation — `None` writes as `BSONNull`
@@ -219,11 +219,14 @@ Reference implementation supports several annotations and config options that ou
 - [x] Limitation #7: `@defaultValue` annotation — per-field default override
 - [x] Limitation #8: `@reader` / `@writer` annotations — per-field custom handlers
 - [x] Port reference tests: `Seq[String]`, single-member case class
-- [ ] Limitation #4: `TypeNaming` (full vs short class name discriminator) — deferred (requires `Class[_]` plumbing in macro)
-- [ ] Limitation #5 (rest): structured `FieldNaming` trait (current `String => String` is more flexible)
-- [ ] Limitation #6: `UnionType` for non-sealed ADTs — large feature
-- [ ] `@Flatten` annotation — medium feature
-- [ ] Limitation #10: `DisableWarnings` / `Verbose` options — not applicable (we use `Environment.reportInfo` unconditionally)
+
+**Deferred limitations** (with reason for deferral):
+
+- [ ] **Limitation #4: `TypeNaming` (full vs short class name discriminator)** — Requires `Class[_]` plumbing in the macro. The reference exposes `TypeNaming` as a `Class[_] => String` function, but in our macro the discriminator dispatch is built at compile time from `Enum.exhaustiveChildren` (whose case names are already the simple class names), and Hearth's `Type[X]` for the existential types from `child.Underlying` doesn't give a direct `Class` handle (and `classOf[CT]` is rejected at macro compile time because the alias is an existential, not a class type). To fully support this we'd need either (a) a way to lift Hearth's `Type[X]` to a `Class[_]` at runtime, or (b) a sealed-trait `TypeNaming` with compile-time-known variants (`SimpleName`, `FullName`) and a custom-function escape hatch for the rest. Effort: medium-hard.
+- [ ] **Limitation #5 (rest): structured `FieldNaming` trait** — Our current `String => String` is more flexible than the reference's `FieldNaming` trait, but the reference's sealed-trait approach gives users type-safe variants. Could add a `FieldNaming` trait mirroring the reference (Identity, SnakeCase, PascalCase, KebabCase) for users who prefer the structured approach. Effort: easy. The current `withSnakeCaseFieldNames`/`withKebabCaseFieldNames`/`withPascalCaseFieldNames` helpers can stay.
+- [ ] **Limitation #6: `UnionType` for non-sealed ADTs** — Large feature. The reference supports `UnionType[UA \/ UB]` (scalaz `\/` either) for non-sealed trait unions with `AutomaticMaterialization`. Requires the user to explicitly enumerate subtypes and tie them together via the `\/` type. Effort: large. Likely not worth it unless users ask for it.
+- [ ] **Limitation #11: `@Flatten` annotation** — Medium feature. Reference supports `@Flatten` on a field of a case class type to flatten the inner case class's fields into the parent document, rather than nesting it as a sub-document. Would require the case-class read/write path to know about the annotation and merge fields instead of nesting. Effort: medium.
+- [ ] **Limitation #10: `DisableWarnings` / `Verbose` options** — Not applicable. We use `Environment.reportInfo` / `Environment.reportErrorAndAbort` unconditionally (the same as the reference's default). If we ever need to suppress noisy macro logs, we can add a config option.
 
 **Test count**: 37 tests passing (was 27 before this task).
 
@@ -254,3 +257,11 @@ Deleted 6 unused runtime helpers from `BsonDocumentHandlerFactories`:
 - `deriveCollectionHandler` and `deriveMapHandler` use dual-path resolution
 - Added `Tree` recursive test
 - **27 tests passing**
+
+### ✅ Feature parity with reference (Task 8 partial)
+- `@noneAsNull` annotation (REFERENCE-COMPARISON #2)
+- `withPascalCaseFieldNames` config helper (REFERENCE-COMPARISON #5 partial)
+- `@defaultValue` annotation (REFERENCE-COMPARISON #7)
+- `@reader` / `@writer` annotations (REFERENCE-COMPARISON #8)
+- Ported `Seq[String]` and single-member case class tests
+- **37 tests passing** (was 27)
