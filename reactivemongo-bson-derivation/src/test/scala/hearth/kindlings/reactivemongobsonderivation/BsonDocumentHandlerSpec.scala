@@ -190,6 +190,20 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val doc = BSONDocument("name" -> "custom")
         assertEquals(handler.readDocument(doc).get, OptionalDefault(Some("custom")))
       }
+
+      test("@defaultValue annotation supplies default for missing field") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithAnnotatedDefaults] =
+          KindlingsBsonDocumentHandler.derived[WithAnnotatedDefaults]
+
+        // Only `id` is present; `name` and `score` use @defaultValue
+        val doc = BSONDocument("id" -> 1)
+        assertEquals(handler.readDocument(doc).get, WithAnnotatedDefaults(1, "anon", 0))
+
+        // All present: defaults are not applied
+        val fullDoc = BSONDocument("id" -> 2, "name" -> "Alice", "score" -> 42)
+        assertEquals(handler.readDocument(fullDoc).get, WithAnnotatedDefaults(2, "Alice", 42))
+      }
     }
 
     group("collection fields") {

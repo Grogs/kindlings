@@ -811,6 +811,31 @@ trait BsonDocumentHandlerMacrosImpl
     ): MIO[Expr[reactivemongo.api.bson.BSONWriter[F]]] =
       BsonDocumentHandlerMacrosImpl.this.resolveBsonWriter[F](fieldCtx)
 
+    /** Compute the default value expression for a field, from either the Scala-level default (via `param.hasDefault` /
+      * `param.defaultValue`) or the `@defaultValue` annotation.
+      */
+    private def computeDefaultExpr[Field: Type](param: Parameter): Option[Expr[Field]] = {
+      val fromParamDefault: Option[Expr[Field]] =
+        if (param.hasDefault) param.defaultValue.flatMap { existentialOuter =>
+          val methodOf = existentialOuter.value
+          methodOf.value match {
+            case noInstance: Method.NoInstance[?] =>
+              import noInstance.Returned; noInstance(Map.empty).toOption.map(_.asInstanceOf[Expr[Field]])
+            case _ => None
+          }
+        }
+        else None
+
+      def fromAnnotation: Option[Expr[Field]] = {
+        val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue[Field]]
+        getAnnotationValueUntyped(param)(annTpe).map { untyped =>
+          untyped.asTyped.asInstanceOf[Expr[Field]]
+        }
+      }
+
+      fromParamDefault.orElse(fromAnnotation)
+    }
+
     private def buildFieldReadExpr[Field: Type](
         docExpr: Expr[BSONDocument],
         fName: String,
@@ -824,16 +849,7 @@ trait BsonDocumentHandlerMacrosImpl
           import isOption.Underlying as Inner
           val innerCtx = fieldCtx.copy(tpe = Type[Inner])
           resolveFieldReader[Inner](innerCtx).map { innerReaderExpr =>
-            val defaultExprOpt: Option[Expr[Field]] =
-              if (param.hasDefault) param.defaultValue.flatMap { existentialOuter =>
-                val methodOf = existentialOuter.value
-                methodOf.value match {
-                  case noInstance: Method.NoInstance[?] =>
-                    import noInstance.Returned; noInstance(Map.empty).toOption.map(_.asInstanceOf[Expr[Field]])
-                  case _ => None
-                }
-              }
-              else None
+            val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
             val readCode = Expr.quote {
               Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
                 case Some(v) if !v.isInstanceOf[reactivemongo.api.bson.BSONNull] =>
@@ -856,16 +872,7 @@ trait BsonDocumentHandlerMacrosImpl
           }
         case _ =>
           resolveFieldReader[Field](fieldCtx).map { readerExpr =>
-            val defaultExprOpt: Option[Expr[Field]] =
-              if (param.hasDefault) param.defaultValue.flatMap { existentialOuter =>
-                val methodOf = existentialOuter.value
-                methodOf.value match {
-                  case noInstance: Method.NoInstance[?] =>
-                    import noInstance.Returned; noInstance(Map.empty).toOption.map(_.asInstanceOf[Expr[Field]])
-                  case _ => None
-                }
-              }
-              else None
+            val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
             defaultExprOpt match {
               case Some(defaultExpr) =>
                 Expr.quote {
