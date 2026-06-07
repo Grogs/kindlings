@@ -1,6 +1,6 @@
 package hearth.kindlings.reactivemongobsonderivation.internal.runtime
 
-import reactivemongo.api.bson.BSONDocument
+import reactivemongo.api.bson.{BSONDocument, BSONValue}
 import scala.util.{Failure, Success, Try}
 
 object BsonDocumentHandlerFactories {

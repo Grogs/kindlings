@@ -270,6 +270,20 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.writeTry(str).get, BSONDocument("className" -> "Str", "value" -> "hello"))
         assertEquals(handler.writeTry(noExpr).get, BSONDocument("className" -> "NoExpr"))
       }
+
+      test("recursive structure (Tree)") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Tree] = KindlingsBsonDocumentHandler.derived[Tree]
+
+        val tree: Tree = TreeNode(
+          TreeLeaf("hi"),
+          TreeNode(TreeLeaf("hello"), TreeLeaf("world"))
+        )
+
+        val written = handler.writeTry(tree).get
+        val readBack = handler.readDocument(written).get
+        assertEquals(readBack, tree)
+      }
     }
 
     group("config") {
