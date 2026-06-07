@@ -1,9 +1,9 @@
 # Tasks: reactivemongo-bson-derivation Improvements
 
-## 📋 Current Session: Recursive Type Derivation + Collection Element Handling
+## 📋 Current Session: Feature parity with reference (annotations & helpers)
 
 **Date**: 2026-06-07  
-**Status**: Done — see task 7 below
+**Status**: In progress — see task 8 below
 
 ---
 
@@ -204,6 +204,28 @@ Added to `docs/mkdocs.yml` nav.
 - [x] Update deriveMapHandler to dual-path
 - [x] Add Tree recursive test
 - [x] All 27 tests pass
+
+---
+
+### 8. Feature parity with reference (annotations & helpers) [IN PROGRESS]
+**Impact**: Closer feature parity with ReactiveMongo-BSON's macro; users can switch with less friction
+**Effort**: Medium
+
+Reference implementation supports several annotations and config options that ours doesn't (see `REFERENCE-COMPARISON.md` for the full list). Tackling them in order of user value, smallest first.
+
+**Status**:
+- [x] Limitation #2: `@noneAsNull` annotation — `None` writes as `BSONNull`
+- [x] Limitation #5 (partial): `withPascalCaseFieldNames` config helper
+- [x] Limitation #7: `@defaultValue` annotation — per-field default override
+- [x] Limitation #8: `@reader` / `@writer` annotations — per-field custom handlers
+- [x] Port reference tests: `Seq[String]`, single-member case class
+- [ ] Limitation #4: `TypeNaming` (full vs short class name discriminator) — deferred (requires `Class[_]` plumbing in macro)
+- [ ] Limitation #5 (rest): structured `FieldNaming` trait (current `String => String` is more flexible)
+- [ ] Limitation #6: `UnionType` for non-sealed ADTs — large feature
+- [ ] `@Flatten` annotation — medium feature
+- [ ] Limitation #10: `DisableWarnings` / `Verbose` options — not applicable (we use `Environment.reportInfo` unconditionally)
+
+**Test count**: 37 tests passing (was 27 before this task).
 
 ---
 
