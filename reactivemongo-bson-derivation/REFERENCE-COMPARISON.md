@@ -26,9 +26,9 @@ This is a friendly difference — users get default values out of the box.
 
 **Reference**: An Option field annotated with `@NoneAsNull` writes `BSONNull` for `None`. Without it, `None` is omitted from the output.
 
-**Ours**: All Option fields are omitted on write for `None`. We don't have a `@NoneAsNull` annotation.
+**Ours**: `@noneAsNull` annotation supported. Option fields annotated with `@noneAsNull` write `BSONNull` for `None`; unannotated ones are omitted (same as before).
 
-**Status**: Feature gap. Could be added by checking for the annotation and writing `BSONNull` instead.
+**Status**: **Done** (see task 8).
 
 ### 3. `BSONNull` is always treated as `None` on read
 
@@ -47,15 +47,15 @@ This is a friendly difference — users get default values out of the box.
 
 **Ours**: Discriminator value is always the short class name (e.g., `Foo`, `Leaf`).
 
-**Status**: Intentional. We don't have a `TypeNaming` concept. The user can override with `@fieldName` if needed.
+**Status**: **Deferred** (see task 8). Adding `TypeNaming` support requires `Class[_]` plumbing in the macro that doesn't fit cleanly with how we build the discriminator dispatch from `Enum.exhaustiveChildren`.
 
 ### 5. Field naming strategies
 
 **Reference**: `FieldNaming.Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, plus a `FieldNaming` function for custom.
 
-**Ours**: User supplies a `String => String` function via `BsonDocumentHandlerConfig.fieldNameMapper`. We provide `withSnakeCaseFieldNames` and `withKebabCaseFieldNames` helpers. No `PascalCase` helper, no arbitrary `FieldNaming` trait.
+**Ours**: User supplies a `String => String` function via `BsonDocumentHandlerConfig.fieldNameMapper`. We provide `withSnakeCaseFieldNames`, `withKebabCaseFieldNames`, and `withPascalCaseFieldNames` helpers. No `FieldNaming` trait.
 
-**Status**: Our API is more flexible (any function) but less structured. Could add `withPascalCaseFieldNames` helper.
+**Status**: **Partially done** (see task 8). Our API is more flexible (any function) but less structured than the reference's `FieldNaming` trait.
 
 ### 6. `UnionType` / non-sealed ADTs
 
@@ -63,23 +63,23 @@ This is a friendly difference — users get default values out of the box.
 
 **Ours**: Not supported. Sealed traits only.
 
-**Status**: Future work. Would require the user to explicitly enumerate subtypes.
+**Status**: **Deferred** (see task 8). Large feature; would require the user to explicitly enumerate subtypes and tie them together via scalaz's `\/` (or similar) type.
 
 ### 7. `@DefaultValue` annotation (per-field default override)
 
 **Reference**: Has `@DefaultValue("default")` annotation that allows specifying a default for fields that don't have a Scala-level default value. Requires `ReadDefaultValues` opt-in.
 
-**Ours**: Only Scala-level default values (`name: String = "default"`) are supported. No `@DefaultValue` annotation.
+**Ours**: `@defaultValue` annotation supported. Per-field default override works without opt-in (since we always apply defaults, see limitation #1). Accepts a value of the field's type.
 
-**Status**: Feature gap. Low priority — Scala-level defaults cover most cases.
+**Status**: **Done** (see task 8).
 
 ### 8. `@Key` / `@Reader` / `@Writer` per-field annotations
 
 **Reference**: Has `@Key("custom_name")` to override BSON key for a single field, `@Reader` and `@Writer` to provide custom handlers per field.
 
-**Ours**: We have `@fieldName` (equivalent to `@Key`). No `@Reader` or `@Writer` (user must derive a sub-handler manually and reference it via the standard `KindlingsBsonDocumentHandler` implicit).
+**Ours**: We have `@fieldName` (equivalent to `@Key`), `@reader`, and `@writer` annotations. `@reader`/`@writer` accept a `BSONReader[T]`/`BSONWriter[T]` instance that overrides the derived handler for a specific field.
 
-**Status**: Partial. `@Reader` / `@Writer` would be a useful addition.
+**Status**: **Done** (see task 8).
 
 ### 9. `AutomaticMaterialization`
 
@@ -95,7 +95,15 @@ This is a friendly difference — users get default values out of the box.
 
 **Ours**: No equivalent. We use `Environment.reportInfo` / `Environment.reportErrorAndAbort` unconditionally.
 
-**Status**: Low priority.
+**Status**: **Not applicable** (see task 8). The reference's `DisableWarnings` is off by default; ours matches. We can add a config option to suppress macro logs if it ever becomes noisy.
+
+### 11. `@Flatten` annotation
+
+**Reference**: `@Flatten` on a field of a case class type flattens the inner case class's fields into the parent document, rather than nesting it as a sub-document.
+
+**Ours**: Not supported. Fields of case class types are always nested as sub-documents.
+
+**Status**: Feature gap. Would require the case-class read/write path to know about the annotation and merge fields instead of nesting.
 
 ## Same Behavior
 
@@ -114,28 +122,23 @@ This is a friendly difference — users get default values out of the box.
 
 The following reference tests cover edge cases we should also test:
 
-1. **`Optional` field with `BSONNull` and missing** — already partially covered
-2. **Recursive structure** (e.g., `Tree`) — **NOT SUPPORTED** (see limitations below)
+1. **`Optional` field with `BSONNull` and missing** — covered (see `@noneAsNull - explicit BSONNull` test)
+2. **Recursive structure** (e.g., `Tree`) — **SUPPORTED** (see task 7, `recursive structure (Tree)` test)
 3. **Generic case class** (`GenSeq`) — not currently tested
 4. **Empty case class** — already covered
 5. **`@Key` / `@fieldName` annotation** — already covered
 6. **Sealed family with case objects** — already covered
-7. **Custom field naming** (SnakeCase, PascalCase) — snake_case already covered
-8. **Union types (ADT)** — partial coverage
-9. **Self-reference** — not currently tested
+7. **Custom field naming** (SnakeCase, PascalCase) — covered
+8. **Union types (ADT)** — partial coverage (sealed traits only; see limitation #6)
+9. **Self-reference** — covered (recursive structure test)
 
-### Recursive Structure Limitation
+### Recursive Structure Limitation (resolved)
 
-Recursive types (e.g., `sealed trait Tree; case class Node(left: Tree, right: Tree) extends Tree`) **fail to compile** with our current implementation. The error is:
-```
-Cannot derive field reader/writer for Tree: No BSONReader found
-```
+Recursive types (e.g., `sealed trait Tree; case class Node(left: Tree, right: Tree) extends Tree`) **now compile and work** with our implementation (see task 7 in `TASKS.md`).
 
-**Root cause**: Our `setHelper` pattern eagerly evaluates the helper body, so recursive references to the cached handler don't find it (the helper is being built, not yet in the cache).
+**Root cause was**: The `setHelper` pattern eagerly evaluated the helper body, so recursive references to the cached handler didn't find it (the helper was being built, not yet in the cache).
 
-**Reference approach** (and jsoniter): `setHelper` takes a **function** `(value, writer, config) => ...` that is invoked LATER, after the helper is registered. Recursive references then find the cached handler.
-
-**Fix**: Refactor `setHelper` to follow the jsoniter pattern (see `jsoniter-derivation/.../CodecMacrosImpl.scala` `deriveEncoderRecursively`). This is a non-trivial refactor.
+**Fix applied**: `setHelper` now uses `cache.buildCachedWith` + `MIO.scoped` (jsoniter pattern) to store the helper MIO without evaluating it; the body is evaluated later (when the def is emitted), so recursive types can find the cached helper before its body is built.
 
 ## Reference Files
 
