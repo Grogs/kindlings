@@ -1,5 +1,9 @@
 package hearth.kindlings.reactivemongobsonderivation
 
+// Field name annotation
+import hearth.kindlings.reactivemongobsonderivation.annotations.fieldName
+import hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull
+
 // Simple types
 final case class Empty()
 final case class Person(name: String, age: Int)
@@ -9,6 +13,8 @@ final case class PersonWithAddress(name: String, address: Address)
 // Option fields
 final case class MaybeName(name: Option[String])
 final case class MaybeNested(address: Option[Address])
+final case class MaybeAsNull(@noneAsNull name: Option[String])
+final case class MaybeNestedAsNull(@noneAsNull address: Option[Address])
 
 // Default values
 final case class WithDefault(name: String = "unknown")
@@ -26,7 +32,6 @@ final case class WrapperId(value: Int) extends AnyVal
 final case class WithValueType(id: WrapperId, name: String)
 
 // Field name annotation
-import hearth.kindlings.reactivemongobsonderivation.annotations.fieldName
 final case class AnnotatedFields(
     @fieldName("first_name") firstName: String,
     @fieldName("years_old") age: Int
