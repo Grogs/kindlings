@@ -49,6 +49,7 @@ case object NoExpr extends Expr
 
 // Field name mapping
 final case class CamelCaseFields(firstName: String, lastName: String, ageInYears: Int)
+final case class SnakeFields(first_name: String, last_name: String)
 
 // Recursive structure
 sealed trait Tree

@@ -25,6 +25,9 @@ final case class BsonDocumentHandlerConfig(
   def withKebabCaseFieldNames: BsonDocumentHandlerConfig =
     copy(fieldNameMapper = BsonDocumentHandlerConfig.kebabCase)
 
+  def withPascalCaseFieldNames: BsonDocumentHandlerConfig =
+    copy(fieldNameMapper = BsonDocumentHandlerConfig.pascalCase)
+
   def withDiscriminatorFieldName(name: String): BsonDocumentHandlerConfig =
     copy(discriminatorFieldName = Some(name))
 
@@ -68,5 +71,10 @@ object BsonDocumentHandlerConfig {
       i += 1
     }
     sb.toString
+  }
+
+  private[reactivemongobsonderivation] val pascalCase: String => String = { s =>
+    if (s.isEmpty) s
+    else s"${s.head.toUpper}${s.tail}"
   }
 }

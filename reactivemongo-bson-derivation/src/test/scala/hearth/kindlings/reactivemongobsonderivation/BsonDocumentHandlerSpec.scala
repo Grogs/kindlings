@@ -364,6 +364,22 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(read, value)
       }
 
+      test("PascalCase field name mapper") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withPascalCaseFieldNames
+
+        val handler = KindlingsBsonDocumentHandler.derived[SnakeFields]
+        val value = SnakeFields("Alice", "Smith")
+
+        // Write should use PascalCase keys
+        val written = handler.writeTry(value).get
+        assertEquals(written.get("First_name").map(_.asInstanceOf[BSONString].value), Some("Alice"))
+        assertEquals(written.get("Last_name").map(_.asInstanceOf[BSONString].value), Some("Smith"))
+
+        // Read should also use PascalCase keys
+        val read = handler.readDocument(written).get
+        assertEquals(read, value)
+      }
+
       test("skipUnexpectedFields=true ignores unknown fields") {
         given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = true)
 
