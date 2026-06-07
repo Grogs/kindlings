@@ -342,6 +342,43 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
     }
 
+    group("per-field reader / writer annotations") {
+
+      test("@reader uses the provided BSONReader") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithPerFieldIO] =
+          KindlingsBsonDocumentHandler.derived[WithPerFieldIO]
+
+        val value = WithPerFieldIO("abc-123", "Alice")
+        val doc = BSONDocument("id" -> "abc-123", "name" -> "Alice")
+
+        // Read: BSONReader from annotation decodes `id`
+        assertEquals(handler.readDocument(doc).get, value)
+      }
+
+      test("@writer uses the provided BSONWriter") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithPerFieldIO] =
+          KindlingsBsonDocumentHandler.derived[WithPerFieldIO]
+
+        val value = WithPerFieldIO("abc-123", "Alice")
+        val doc = BSONDocument("id" -> "abc-123", "name" -> "Alice")
+
+        // Write: BSONWriter from annotation writes `name`
+        assertEquals(handler.writeTry(value).get, doc)
+      }
+
+      test("round-trip with @reader and @writer") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithPerFieldIO] =
+          KindlingsBsonDocumentHandler.derived[WithPerFieldIO]
+
+        val value = WithPerFieldIO("xyz", "Bob")
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+    }
+
     group("config") {
       test("custom discriminator field name") {
         given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(discriminatorFieldName = Some("kind"))
