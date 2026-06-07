@@ -100,6 +100,48 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.readDocument(doc).get, value)
         assertEquals(handler.writeTry(value).get, doc)
       }
+
+      test("@noneAsNull - Some writes normally") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[MaybeAsNull] =
+          KindlingsBsonDocumentHandler.derived[MaybeAsNull]
+
+        val value = MaybeAsNull(Some("Alice"))
+        val doc = BSONDocument("name" -> "Alice")
+
+        assertEquals(handler.writeTry(value).get, doc)
+        assertEquals(handler.readDocument(doc).get, value)
+      }
+
+      test("@noneAsNull - None writes as BSONNull") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[MaybeAsNull] =
+          KindlingsBsonDocumentHandler.derived[MaybeAsNull]
+
+        val value = MaybeAsNull(None)
+        val doc = BSONDocument("name" -> BSONNull)
+
+        assertEquals(handler.writeTry(value).get, doc)
+        assertEquals(handler.readDocument(doc).get, value)
+      }
+
+      test("@noneAsNull - nested case class type") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[MaybeNestedAsNull] =
+          KindlingsBsonDocumentHandler.derived[MaybeNestedAsNull]
+
+        val valueSome = MaybeNestedAsNull(Some(Address("123 Main St", "Springfield")))
+        val docSome = BSONDocument("address" -> BSONDocument("street" -> "123 Main St", "city" -> "Springfield"))
+
+        assertEquals(handler.writeTry(valueSome).get, docSome)
+        assertEquals(handler.readDocument(docSome).get, valueSome)
+
+        val valueNone = MaybeNestedAsNull(None)
+        val docNone = BSONDocument("address" -> BSONNull)
+
+        assertEquals(handler.writeTry(valueNone).get, docNone)
+        assertEquals(handler.readDocument(docNone).get, valueNone)
+      }
     }
 
     group("default values") {

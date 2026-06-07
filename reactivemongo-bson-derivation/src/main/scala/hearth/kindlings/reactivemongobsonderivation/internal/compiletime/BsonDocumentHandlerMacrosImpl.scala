@@ -37,6 +37,8 @@ trait BsonDocumentHandlerMacrosImpl
     val TryCtor: Type.Ctor1[Try] = Type.Ctor1.of[Try]
     val fieldNameAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName] =
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName]
+    val noneAsNullAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull] =
+      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull]
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
       Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
@@ -903,16 +905,37 @@ trait BsonDocumentHandlerMacrosImpl
         case IsOption(isOption) =>
           import isOption.Underlying as Inner
           val innerCtx = fieldCtx.copy(tpe = Type[Inner])
+          implicit val nat: Type[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull] =
+            Types.noneAsNullAnn
+          val writeAsNull =
+            hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull](param)
           resolveFieldWriter[Inner](innerCtx).map { innerWriterExpr =>
-            Expr.quote {
-              Expr.splice(fieldValue) match {
-                case Some(v) =>
-                  Expr.splice(innerWriterExpr).writeTry(v.asInstanceOf[Inner]).map { bsv =>
-                    Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
-                  }
-                case None => scala.util.Success(None)
+            if (writeAsNull)
+              Expr.quote {
+                Expr.splice(fieldValue) match {
+                  case Some(v) =>
+                    Expr.splice(innerWriterExpr).writeTry(v.asInstanceOf[Inner]).map { bsv =>
+                      Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
+                    }
+                  case None =>
+                    scala.util.Success(
+                      Some(
+                        reactivemongo.api.bson
+                          .BSONElement(Expr.splice(fNameExpr), reactivemongo.api.bson.BSONNull)
+                      )
+                    )
+                }
               }
-            }
+            else
+              Expr.quote {
+                Expr.splice(fieldValue) match {
+                  case Some(v) =>
+                    Expr.splice(innerWriterExpr).writeTry(v.asInstanceOf[Inner]).map { bsv =>
+                      Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
+                    }
+                  case None => scala.util.Success(None)
+                }
+              }
           }
         case _ =>
           resolveFieldWriter[Field](fieldCtx).map { writerExpr =>
