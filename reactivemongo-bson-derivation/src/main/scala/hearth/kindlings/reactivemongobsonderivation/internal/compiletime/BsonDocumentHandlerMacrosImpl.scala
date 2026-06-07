@@ -266,6 +266,30 @@ trait BsonDocumentHandlerMacrosImpl
       }
     }
 
+  /** Try to extract a @reader-annotated BSONReader for a field. Returns None if no annotation. */
+  def annotatedReader[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.reader[A]]
+    getAnnotationValueUntyped(param)(annTpe).map { untyped =>
+      // The annotation argument is a BSONReader[A]-typed value, but UntypedExpr loses the type.
+      // Wrap it in a quote that upcasts to the expected reader type.
+      implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
+      Expr.quote {
+        (Expr.splice(untyped.asTyped)).asInstanceOf[reactivemongo.api.bson.BSONReader[A]]
+      }
+    }
+  }
+
+  /** Try to extract a @writer-annotated BSONWriter for a field. Returns None if no annotation. */
+  def annotatedWriter[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.writer[A]]
+    getAnnotationValueUntyped(param)(annTpe).map { untyped =>
+      implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+      Expr.quote {
+        (Expr.splice(untyped.asTyped)).asInstanceOf[reactivemongo.api.bson.BSONWriter[A]]
+      }
+    }
+  }
+
   // Context
 
   final case class DerivationCtx[A](
@@ -844,6 +868,53 @@ trait BsonDocumentHandlerMacrosImpl
     ): MIO[Expr[scala.util.Try[Any]]] = {
       val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
 
+      // @reader annotation: use the provided reader directly
+      annotatedReader[Field](param) match {
+        case Some(readerExpr) =>
+          val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
+          buildReadWithReader[Field](docExpr, fNameExpr, readerExpr, defaultExprOpt)
+        case None =>
+          buildFieldReadExprWithoutAnnotation[Field](docExpr, fNameExpr, param, fieldCtx)
+      }
+    }
+
+    private def buildReadWithReader[Field: Type](
+        docExpr: Expr[BSONDocument],
+        fNameExpr: Expr[String],
+        readerExpr: Expr[reactivemongo.api.bson.BSONReader[Field]],
+        defaultExprOpt: Option[Expr[Field]]
+    ): MIO[Expr[scala.util.Try[Any]]] = {
+      val readCode = Expr.quote {
+        Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
+          case Some(v) if !v.isInstanceOf[reactivemongo.api.bson.BSONNull] =>
+            Expr.splice(readerExpr).readTry(v).asInstanceOf[scala.util.Try[Any]]
+          case _ =>
+            scala.util
+              .Failure(new NoSuchElementException("Field not found"))
+              .asInstanceOf[scala.util.Try[Any]]
+        }
+      }
+      defaultExprOpt match {
+        case Some(defaultExpr) =>
+          MIO.pure(
+            Expr.quote {
+              Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
+                case None => scala.util.Success(Expr.splice(defaultExpr)).asInstanceOf[scala.util.Try[Any]]
+                case _    => Expr.splice(readCode)
+              }
+            }
+          )
+        case None => MIO.pure(readCode)
+      }
+    }
+
+    private def buildFieldReadExprWithoutAnnotation[Field: Type](
+        docExpr: Expr[BSONDocument],
+        fNameExpr: Expr[String],
+        param: Parameter,
+        fieldCtx: DerivationCtx[Field]
+    ): MIO[Expr[scala.util.Try[Any]]] =
+
       Type[Field] match {
         case IsOption(isOption) =>
           import isOption.Underlying as Inner
@@ -898,7 +969,6 @@ trait BsonDocumentHandlerMacrosImpl
             }
           }
       }
-    }
 
     private def buildFieldWriteExpr[Field: Type](
         fName: String,
@@ -907,6 +977,28 @@ trait BsonDocumentHandlerMacrosImpl
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[Option[reactivemongo.api.bson.BSONElement]]]] = {
       val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
+
+      // @writer annotation: use the provided writer directly
+      annotatedWriter[Field](param) match {
+        case Some(writerExpr) =>
+          MIO.pure(
+            Expr.quote {
+              Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).map { bsv =>
+                Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
+              }
+            }
+          )
+        case None =>
+          buildFieldWriteExprWithoutAnnotation[Field](fNameExpr, param, fieldValue, fieldCtx)
+      }
+    }
+
+    private def buildFieldWriteExprWithoutAnnotation[Field: Type](
+        fNameExpr: Expr[String],
+        param: Parameter,
+        fieldValue: Expr[Field],
+        fieldCtx: DerivationCtx[Field]
+    ): MIO[Expr[scala.util.Try[Option[reactivemongo.api.bson.BSONElement]]]] =
 
       Type[Field] match {
         case IsOption(isOption) =>
@@ -953,7 +1045,6 @@ trait BsonDocumentHandlerMacrosImpl
             }
           }
       }
-    }
 
     private def deriveCaseClass[A: DerivationCtx](
         caseClass: CaseClass[A]

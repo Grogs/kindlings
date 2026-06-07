@@ -4,6 +4,8 @@ package hearth.kindlings.reactivemongobsonderivation
 import hearth.kindlings.reactivemongobsonderivation.annotations.fieldName
 import hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull
 import hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue
+import hearth.kindlings.reactivemongobsonderivation.annotations.reader
+import hearth.kindlings.reactivemongobsonderivation.annotations.writer
 
 // Simple types
 final case class Empty()
@@ -57,3 +59,9 @@ final case class SnakeFields(first_name: String, last_name: String)
 sealed trait Tree
 final case class TreeNode(left: Tree, right: Tree) extends Tree
 final case class TreeLeaf(data: String) extends Tree
+
+// @reader / @writer annotations
+final case class WithPerFieldIO(
+    @reader(reactivemongo.api.bson.BSONStringHandler) id: String,
+    @writer(reactivemongo.api.bson.BSONStringHandler) name: String
+)
