@@ -30,6 +30,10 @@ final case class WithSeq(scores: Seq[Int])
 final case class WithVector(tags: Vector[String])
 final case class WithSet(unique: Set[Int])
 final case class WithMap(items: Map[String, Int])
+final case class WordLover(name: String, words: Seq[String])
+
+// Single member case class
+final case class SingleBigDecimal(value: BigDecimal)
 
 // Value types (AnyVal)
 final case class WrapperId(value: Int) extends AnyVal

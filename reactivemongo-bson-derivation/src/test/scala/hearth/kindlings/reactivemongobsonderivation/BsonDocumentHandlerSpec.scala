@@ -238,6 +238,25 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(value).get
         assertEquals(handler.readDocument(written).get, value)
       }
+
+      test("Seq[String]") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WordLover] = KindlingsBsonDocumentHandler.derived[WordLover]
+
+        val value = WordLover("john", Seq("hello", "world"))
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("single member case class") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[SingleBigDecimal] =
+          KindlingsBsonDocumentHandler.derived[SingleBigDecimal]
+
+        val value = SingleBigDecimal(BigDecimal("12.345"))
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
     }
 
     group("value types") {
