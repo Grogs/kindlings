@@ -18,4 +18,10 @@ trait AnnotationSupportScala3 extends AnnotationSupport { this: MacroCommonsScal
       case Apply(_, List(Literal(StringConstant(value)))) => Some(value)
       case _                                              => None
     }
+
+  override protected def extractSingleArgFromAnnotation(annotation: UntypedExpr): Option[UntypedExpr] =
+    annotation match {
+      case Apply(_, List(arg)) => Some(arg)
+      case _                   => None
+    }
 }

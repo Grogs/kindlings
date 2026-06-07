@@ -3,6 +3,7 @@ package hearth.kindlings.reactivemongobsonderivation
 // Field name annotation
 import hearth.kindlings.reactivemongobsonderivation.annotations.fieldName
 import hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull
+import hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue
 
 // Simple types
 final case class Empty()
@@ -19,6 +20,7 @@ final case class MaybeNestedAsNull(@noneAsNull address: Option[Address])
 // Default values
 final case class WithDefault(name: String = "unknown")
 final case class OptionalDefault(name: Option[String] = Some("unknown"))
+final case class WithAnnotatedDefaults(id: Int, @defaultValue("anon") name: String, @defaultValue(0) score: Int)
 
 // Collection fields
 final case class WithList(names: List[String])
