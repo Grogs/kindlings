@@ -234,6 +234,20 @@ Reference implementation supports several annotations and config options that ou
 
 ---
 
+### 9. Port reference tests [DONE]
+**Impact**: Improve confidence and document behavioral differences vs ReactiveMongo-BSON
+**Effort**: Medium
+
+Ported ~22 reference behaviors from `ReactiveMongo-BSON/api/src/test/scala/MacroSpec.scala`. Full status tracked in `REFERENCE-TESTS.md`.
+
+**Status**:
+- [x] Port straightforward Formatter tests (primitives, nesting, optional, generics, overloaded apply, empty case classes, self-reference, defaults, maps)
+- [x] Adapt tests where our behavior differs (value class wrapping, GenSeq element type, @defaultValue Option)
+- [x] Document skipped tests and reasons in `REFERENCE-TESTS.md`
+- [x] 63 tests passing
+
+---
+
 ## Completed
 
 ### ✅ Dead code removal
@@ -269,3 +283,9 @@ Deleted 6 unused runtime helpers from `BsonDocumentHandlerFactories`:
 - `@flatten` annotation (REFERENCE-COMPARISON #11)
 - Ported `Seq[String]` and single-member case class tests
 - **43 tests passing** (was 27)
+
+### ✅ Reference test porting (Task 9)
+- Ported ~22 reference behaviors from `MacroSpec.scala`
+- Adapted tests where our behavior differs
+- Documented skipped tests and reasons in `REFERENCE-TESTS.md`
+- **63 tests passing**
