@@ -398,6 +398,33 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
     }
 
+    group("flatten annotation") {
+
+      test("@flatten merges inner case class fields into parent document") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[LabelledRange] =
+          KindlingsBsonDocumentHandler.derived[LabelledRange]
+
+        val value = LabelledRange("range1", Range(2, 5))
+        val expectedDoc = BSONDocument("name" -> "range1", "start" -> 2, "end" -> 5)
+
+        assertEquals(handler.writeTry(value).get, expectedDoc)
+        assertEquals(handler.readDocument(expectedDoc).get, value)
+      }
+
+      test("@flatten works with nested flattening") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[OuterFlatten] =
+          KindlingsBsonDocumentHandler.derived[OuterFlatten]
+
+        val value = OuterFlatten(MiddleFlatten(InnerFlatten(1, 2), "middle"), "outer")
+        val expectedDoc = BSONDocument("a" -> 1, "b" -> 2, "c" -> "middle", "d" -> "outer")
+
+        assertEquals(handler.writeTry(value).get, expectedDoc)
+        assertEquals(handler.readDocument(expectedDoc).get, value)
+      }
+    }
+
     group("config") {
       test("custom discriminator field name") {
         given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(discriminatorFieldName = Some("kind"))

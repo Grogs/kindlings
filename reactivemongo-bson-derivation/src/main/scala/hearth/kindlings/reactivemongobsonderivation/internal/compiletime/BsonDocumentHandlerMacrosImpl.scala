@@ -39,6 +39,8 @@ trait BsonDocumentHandlerMacrosImpl
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName]
     val noneAsNullAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull] =
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull]
+    val flattenAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.flatten] =
+      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.flatten]
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
       Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
@@ -865,18 +867,31 @@ trait BsonDocumentHandlerMacrosImpl
         fName: String,
         param: Parameter,
         fieldCtx: DerivationCtx[Field]
-    ): MIO[Expr[scala.util.Try[Any]]] = {
-      val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
+    ): MIO[Expr[scala.util.Try[Any]]] =
+      if (isFlattened(param)) {
+        buildFlattenedFieldReadExpr[Field](docExpr, fieldCtx)
+      } else {
+        val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
 
-      // @reader annotation: use the provided reader directly
-      annotatedReader[Field](param) match {
-        case Some(readerExpr) =>
-          val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
-          buildReadWithReader[Field](docExpr, fNameExpr, readerExpr, defaultExprOpt)
-        case None =>
-          buildFieldReadExprWithoutAnnotation[Field](docExpr, fNameExpr, param, fieldCtx)
+        // @reader annotation: use the provided reader directly
+        annotatedReader[Field](param) match {
+          case Some(readerExpr) =>
+            val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
+            buildReadWithReader[Field](docExpr, fNameExpr, readerExpr, defaultExprOpt)
+          case None =>
+            buildFieldReadExprWithoutAnnotation[Field](docExpr, fNameExpr, param, fieldCtx)
+        }
       }
-    }
+
+    private def buildFlattenedFieldReadExpr[Field: Type](
+        docExpr: Expr[BSONDocument],
+        fieldCtx: DerivationCtx[Field]
+    ): MIO[Expr[scala.util.Try[Any]]] =
+      deriveResultRecursively[Field](fieldCtx).map { handlerExpr =>
+        Expr.quote {
+          Expr.splice(handlerExpr).readTry(Expr.splice(docExpr)).asInstanceOf[scala.util.Try[Any]]
+        }
+      }
 
     private def buildReadWithReader[Field: Type](
         docExpr: Expr[BSONDocument],
@@ -970,35 +985,56 @@ trait BsonDocumentHandlerMacrosImpl
           }
       }
 
+    private def isFlattened(param: Parameter): Boolean = {
+      implicit val fat: Type[hearth.kindlings.reactivemongobsonderivation.annotations.flatten] = Types.flattenAnn
+      hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.flatten](param)
+    }
+
     private def buildFieldWriteExpr[Field: Type](
         fName: String,
         param: Parameter,
         fieldValue: Expr[Field],
         fieldCtx: DerivationCtx[Field]
-    ): MIO[Expr[scala.util.Try[Option[reactivemongo.api.bson.BSONElement]]]] = {
+    ): MIO[Expr[scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]]] = {
       val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
 
-      // @writer annotation: use the provided writer directly
-      annotatedWriter[Field](param) match {
-        case Some(writerExpr) =>
-          MIO.pure(
-            Expr.quote {
-              Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).map { bsv =>
-                Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
+      if (isFlattened(param)) {
+        buildFlattenedFieldWriteExpr[Field](fieldValue, fieldCtx)
+      } else {
+        // @writer annotation: use the provided writer directly
+        annotatedWriter[Field](param) match {
+          case Some(writerExpr) =>
+            MIO.pure(
+              Expr.quote {
+                Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).map { bsv =>
+                  List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
+                }
               }
-            }
-          )
-        case None =>
-          buildFieldWriteExprWithoutAnnotation[Field](fNameExpr, param, fieldValue, fieldCtx)
+            )
+          case None =>
+            buildFieldWriteExprWithoutAnnotation[Field](fNameExpr, param, fieldValue, fieldCtx)
+        }
       }
     }
+
+    private def buildFlattenedFieldWriteExpr[Field: Type](
+        fieldValue: Expr[Field],
+        fieldCtx: DerivationCtx[Field]
+    ): MIO[Expr[scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]]] =
+      deriveResultRecursively[Field](fieldCtx).map { handlerExpr =>
+        Expr.quote {
+          Expr.splice(handlerExpr).writeTry(Expr.splice(fieldValue)).map { innerDoc =>
+            innerDoc.elements.map(e => Some(reactivemongo.api.bson.BSONElement(e.name, e.value))).toList
+          }
+        }
+      }
 
     private def buildFieldWriteExprWithoutAnnotation[Field: Type](
         fNameExpr: Expr[String],
         param: Parameter,
         fieldValue: Expr[Field],
         fieldCtx: DerivationCtx[Field]
-    ): MIO[Expr[scala.util.Try[Option[reactivemongo.api.bson.BSONElement]]]] =
+    ): MIO[Expr[scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]]] =
 
       Type[Field] match {
         case IsOption(isOption) =>
@@ -1014,13 +1050,15 @@ trait BsonDocumentHandlerMacrosImpl
                 Expr.splice(fieldValue) match {
                   case Some(v) =>
                     Expr.splice(innerWriterExpr).writeTry(v.asInstanceOf[Inner]).map { bsv =>
-                      Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
+                      List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
                     }
                   case None =>
                     scala.util.Success(
-                      Some(
-                        reactivemongo.api.bson
-                          .BSONElement(Expr.splice(fNameExpr), reactivemongo.api.bson.BSONNull)
+                      List(
+                        Some(
+                          reactivemongo.api.bson
+                            .BSONElement(Expr.splice(fNameExpr), reactivemongo.api.bson.BSONNull)
+                        )
                       )
                     )
                 }
@@ -1030,9 +1068,9 @@ trait BsonDocumentHandlerMacrosImpl
                 Expr.splice(fieldValue) match {
                   case Some(v) =>
                     Expr.splice(innerWriterExpr).writeTry(v.asInstanceOf[Inner]).map { bsv =>
-                      Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
+                      List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
                     }
-                  case None => scala.util.Success(None)
+                  case None => scala.util.Success(List.empty)
                 }
               }
           }
@@ -1040,7 +1078,7 @@ trait BsonDocumentHandlerMacrosImpl
           resolveFieldWriter[Field](fieldCtx).map { writerExpr =>
             Expr.quote {
               Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).map { bsv =>
-                Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv))
+                List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
               }
             }
           }
@@ -1114,8 +1152,12 @@ trait BsonDocumentHandlerMacrosImpl
                   Expr.quote(Expr.splice(read) :: Expr.splice(acc))
                 }
                 // Build the unexpected fields check (no-op when skipUnexpectedFields=true or all keys are literals)
-                val knownKeyExprs: List[Expr[String]] = fieldsList.map { case (fName, param) =>
-                  resolveFieldKeyExpr(fName, param, ctx)
+                // Flattened fields are excluded from the outer check because their inner field names are not known
+                // at this point without re-parsing the inner case class. The inner handler will still validate its own
+                // fields when skipUnexpectedFields=false.
+                val knownKeyExprs: List[Expr[String]] = fieldsList.flatMap { case (fName, param) =>
+                  if (isFlattened(param)) None
+                  else Some(resolveFieldKeyExpr(fName, param, ctx))
                 }
                 val unexpectedCheckExpr: Expr[scala.util.Try[Unit]] = buildUnexpectedFieldsCheck(
                   docExpr,
@@ -1153,7 +1195,7 @@ trait BsonDocumentHandlerMacrosImpl
                       ]
                     )
                   ) { case (et, acc) =>
-                    Expr.quote(for { tail <- Expr.splice(acc); head <- Expr.splice(et) } yield head :: tail)
+                    Expr.quote(for { tail <- Expr.splice(acc); head <- Expr.splice(et) } yield tail ++ head)
                   }
                   Expr.quote(Expr.splice(listTryExpr).map(options => BSONDocument(options.flatten*)))
                 }
