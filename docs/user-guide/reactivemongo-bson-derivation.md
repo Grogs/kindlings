@@ -55,11 +55,10 @@ Customize derivation with `BsonDocumentHandlerConfig`:
 ```scala
 import hearth.kindlings.reactivemongobsonderivation._
 
-val customConfig = BsonDocumentHandlerConfig(
-  fieldNameMapper = BsonDocumentHandlerConfig.snakeCase,
-  discriminatorFieldName = Some("type"),
-  skipUnexpectedFields = true
-)
+val customConfig = BsonDocumentHandlerConfig()
+  .withSnakeCaseFieldNames
+  .withDiscriminatorFieldName("type")
+  .withSkipUnexpectedFields(true)
 
 given BsonDocumentHandlerConfig = customConfig
 val handler = KindlingsBsonDocumentHandler.derived[Person]
@@ -108,6 +107,21 @@ Set to `None` to use wrapper-style encoding instead of discriminator-style:
 
 ```scala
 given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withoutDiscriminator
+```
+
+### `typeNaming: TypeNaming`
+
+Controls how sealed-trait / enum case types are mapped to discriminator values. Default: `TypeNaming.SimpleName`.
+
+```scala
+import hearth.kindlings.reactivemongobsonderivation.TypeNaming
+
+// Use the full type name (e.g. com.example.MyModule.Leaf)
+given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.FullName)
+
+// Custom transformation of the simple name
+given BsonDocumentHandlerConfig =
+  BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.Custom(_.toLowerCase))
 ```
 
 ### `skipUnexpectedFields: Boolean`
@@ -250,6 +264,5 @@ handler.readDocument(BSONDocument()).get
 - JVM only (Scala.js / Scala Native are not applicable — `reactivemongo-bson-api` is JVM-only)
 - `Map` key type is fixed to `String`; non-`String` keys are not supported
 - Sealed trait hierarchies must be reachable from the derived type (no orphan sub-hierarchies)
-- Discriminator value is always the short class name (`TypeNaming` customization is a future task)
 - `@flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
 - No `UnionType` for non-sealed ADTs
