@@ -562,5 +562,234 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
     }
 
+    group("reference ported tests") {
+
+      test("handle primitives") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Primitives] = KindlingsBsonDocumentHandler.derived[Primitives]
+
+        val value = Primitives(1.2, "hai", true, 42, Long.MaxValue)
+        val written = handler.writeTry(value).get
+        assertEquals(written.get("dbl").map(_.asInstanceOf[BSONDouble].value), Some(1.2))
+        assertEquals(written.get("str").map(_.asInstanceOf[BSONString].value), Some("hai"))
+        assertEquals(written.get("bl").map(_.asInstanceOf[BSONBoolean].value), Some(true))
+        assertEquals(written.get("int").map(_.asInstanceOf[BSONInteger].value), Some(42))
+        assertEquals(written.get("long").map(_.asInstanceOf[BSONLong].value), Some(Long.MaxValue))
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("support nesting") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Pet] = KindlingsBsonDocumentHandler.derived[Pet]
+
+        val value = Pet("woof", Person("john", 30))
+        val written = handler.writeTry(value).get
+        val expected = BSONDocument("name" -> "woof", "owner" -> BSONDocument("name" -> "john", "age" -> 30))
+        assertEquals(written, expected)
+        assertEquals(handler.readDocument(expected).get, value)
+      }
+
+      test("support optional") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Optional] = KindlingsBsonDocumentHandler.derived[Optional]
+
+        val some = Optional("some", Some("value"))
+        val none = Optional("none", None)
+
+        val someDoc = BSONDocument("name" -> "some", "value" -> "value")
+        val noneDoc = BSONDocument("name" -> "none")
+
+        assertEquals(handler.writeTry(some).get, someDoc)
+        assertEquals(handler.writeTry(none).get, noneDoc)
+        assertEquals(handler.readDocument(someDoc).get, some)
+        assertEquals(handler.readDocument(noneDoc).get, none)
+      }
+
+      test("support optional as null") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[OptionalAsNull] =
+          KindlingsBsonDocumentHandler.derived[OptionalAsNull]
+
+        val value = OptionalAsNull("asNull", None)
+        val expected = BSONDocument("name" -> "asNull", "value" -> BSONNull)
+        assertEquals(handler.writeTry(value).get, expected)
+        assertEquals(handler.readDocument(expected).get, value)
+      }
+
+      test("support single member options") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[OptionalSingle] =
+          KindlingsBsonDocumentHandler.derived[OptionalSingle]
+
+        val some = OptionalSingle(Some("foo"))
+        val none = OptionalSingle(None)
+
+        assertEquals(handler.readDocument(handler.writeTry(some).get).get, some)
+        assertEquals(handler.readDocument(handler.writeTry(none).get).get, none)
+      }
+
+      test("support generic optional value") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[OptionalGeneric[String]] =
+          KindlingsBsonDocumentHandler.derived[OptionalGeneric[String]]
+
+        val none = OptionalGeneric[String](1, None)
+        val some = OptionalGeneric(2, Some("foo"))
+
+        assertEquals(handler.readDocument(BSONDocument("v" -> 1)).get, none)
+        assertEquals(handler.readDocument(BSONDocument("v" -> 2, "opt" -> "foo")).get, some)
+      }
+
+      test("support generic case class Foo") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Foo[SingleBigDecimal]] =
+          KindlingsBsonDocumentHandler.derived[Foo[SingleBigDecimal]]
+
+        val value = Foo(SingleBigDecimal(BigDecimal("1.23")), "ipsum")
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("support generic case class GenSeq") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[GenSeq[String]] =
+          KindlingsBsonDocumentHandler.derived[GenSeq[String]]
+
+        val value = GenSeq(Seq("hello", "world"), 2)
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("handle overloaded apply") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[OverloadedApply] =
+          KindlingsBsonDocumentHandler.derived[OverloadedApply]
+
+        val doc1 = OverloadedApply("hello")
+        val doc2 = OverloadedApply(Seq("hello", "world"))
+
+        assertEquals(handler.readDocument(handler.writeTry(doc1).get).get, doc1)
+        assertEquals(handler.readDocument(handler.writeTry(doc2).get).get, doc2)
+      }
+
+      test("handle overloaded apply with different number of arguments") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[OverloadedApply2] =
+          KindlingsBsonDocumentHandler.derived[OverloadedApply2]
+
+        val doc1 = OverloadedApply2("hello", 5)
+        val doc2 = OverloadedApply2("hello")
+
+        assertEquals(handler.readDocument(handler.writeTry(doc1).get).get, doc1)
+        assertEquals(handler.readDocument(handler.writeTry(doc2).get).get, doc2)
+      }
+
+      test("handle overloaded apply with 0 number of arguments") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[OverloadedApply3] =
+          KindlingsBsonDocumentHandler.derived[OverloadedApply3]
+
+        val doc1 = OverloadedApply3("hello", 5)
+        val doc2 = OverloadedApply3()
+
+        assertEquals(handler.readDocument(handler.writeTry(doc1).get).get, doc1)
+        assertEquals(handler.readDocument(handler.writeTry(doc2).get).get, doc2)
+      }
+
+      test("handle case class inside trait with handler outside") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[NestModule.Nested] =
+          KindlingsBsonDocumentHandler.derived[NestModule.Nested]
+
+        val value = NestModule.Nested("it works")
+        assertEquals(handler.readDocument(handler.writeTry(value).get).get, value)
+      }
+
+      test("not persist class name for case class") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Address] = KindlingsBsonDocumentHandler.derived[Address]
+
+        val written = handler.writeTry(Address("street", "city")).get
+        assert(written.get("className").isEmpty, "Plain case class should not have className field")
+      }
+
+      test("handle empty case classes") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Empty] = KindlingsBsonDocumentHandler.derived[Empty]
+
+        val value = Empty()
+        assertEquals(handler.readDocument(handler.writeTry(value).get).get, value)
+      }
+
+      test("support overriding keys with annotations") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[RenamedId] = KindlingsBsonDocumentHandler.derived[RenamedId]
+
+        val value = RenamedId("id-value", "foo")
+        val written = handler.writeTry(value).get
+        assertEquals(written.get("_id").map(_.asInstanceOf[BSONString].value), Some("id-value"))
+        assertEquals(written.get("value").map(_.asInstanceOf[BSONString].value), Some("foo"))
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("be generated for class with self reference") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Bar] = KindlingsBsonDocumentHandler.derived[Bar]
+
+        val bar1 = Bar("bar1", None)
+        val bar2 = Bar("bar2", Some(bar1))
+
+        assertEquals(handler.readDocument(handler.writeTry(bar1).get).get, bar1)
+        assertEquals(handler.readDocument(handler.writeTry(bar2).get).get, bar2)
+      }
+
+      test("be generated for value class (wrapped)") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithValueTypeField] =
+          KindlingsBsonDocumentHandler.derived[WithValueTypeField]
+
+        val value = WithValueTypeField("foo", WithValueClass(42))
+        val written = handler.writeTry(value).get
+        // Our value-class handling wraps as {"value": <underlying>} rather than unwrapping inline
+        assertEquals(written.get("name").map(_.asInstanceOf[BSONString].value), Some("foo"))
+        assertEquals(
+          written.get("id").flatMap(_.asInstanceOf[BSONDocument].get("value")).map(_.asInstanceOf[BSONInteger].value),
+          Some(42)
+        )
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("default values from Scala-level defaults") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithDefaultValues1] =
+          KindlingsBsonDocumentHandler.derived[WithDefaultValues1]
+
+        assertEquals(
+          handler.readDocument(BSONDocument("id" -> 1)).get,
+          WithDefaultValues1(1)
+        )
+      }
+
+      test("default values from @defaultValue annotation") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithDefaultValues2] =
+          KindlingsBsonDocumentHandler.derived[WithDefaultValues2]
+
+        val result = handler.readDocument(BSONDocument("id" -> 1)).get
+        assertEquals(result.id, 1)
+        assertEquals(result.title, "default2")
+        assertEquals(result.range, Range(7, 11))
+      }
+
+      test("Map with String keys") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithMap1] = KindlingsBsonDocumentHandler.derived[WithMap1]
+
+        val value = WithMap1("name", Map("en" -> "English", "fr" -> "French"))
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+    }
+
   }
 }

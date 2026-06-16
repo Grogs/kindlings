@@ -97,3 +97,64 @@ final case class WithPerFieldIO(
     @reader(reactivemongo.api.bson.BSONStringHandler) id: String,
     @writer(reactivemongo.api.bson.BSONStringHandler) name: String
 )
+
+// Reference-ported test data
+final case class Pet(name: String, owner: Person)
+
+final case class Primitives(dbl: Double, str: String, bl: Boolean, int: Int, long: Long)
+
+final case class Optional(name: String, value: Option[String])
+final case class OptionalAsNull(name: String, @noneAsNull value: Option[String])
+final case class OptionalSingle(value: Option[String])
+final case class OptionalGeneric[T](v: Int, opt: Option[T])
+
+final case class Foo[T](bar: T, lorem: String)
+final case class Bar(name: String, next: Option[Bar])
+
+type Items[A] = Seq[A]
+final case class GenSeq[A](items: Items[A], count: Int)
+
+final case class OverloadedApply(string: String)
+object OverloadedApply {
+  val apply: Int => Unit = _ => ()
+  def apply(seq: Seq[String]): OverloadedApply = OverloadedApply(seq.mkString(" "))
+}
+
+final case class OverloadedApply2(string: String, number: Int)
+object OverloadedApply2 {
+  def apply(string: String): OverloadedApply2 = OverloadedApply2(string, 0)
+}
+
+final case class OverloadedApply3(string: String, number: Int)
+object OverloadedApply3 {
+  def apply(): OverloadedApply3 = OverloadedApply3("", 0)
+}
+
+object NestModule {
+  case class Nested(name: String)
+}
+
+final case class RenamedId(@fieldName("_id") myID: String, value: String)
+
+final case class WithDefaultValues1(
+    id: Int,
+    title: String = "default1",
+    score: Option[Float] = Some(1.23f),
+    range: Range = Range(3, 5)
+)
+
+final case class WithDefaultValues2(
+    id: Int,
+    @defaultValue("default2") title: String,
+    @defaultValue(Some(45.6f)) score: Option[Float],
+    @defaultValue(Range(7, 11)) range: Range
+)
+
+final case class WithMap1(name: String, localizedDescription: Map[String, String])
+
+final class FooVal(val v: Int) extends AnyVal
+final case class Item(name: String, number: FooVal)
+final case class Person2(name: String, age: Int, phoneNum: Long, itemList: Seq[Item], list: Seq[Int])
+
+final case class WithValueClass(value: Int) extends AnyVal
+final case class WithValueTypeField(name: String, id: WithValueClass)
