@@ -101,9 +101,9 @@ This is a friendly difference — users get default values out of the box.
 
 **Reference**: `@Flatten` on a field of a case class type flattens the inner case class's fields into the parent document, rather than nesting it as a sub-document.
 
-**Ours**: Not supported. Fields of case class types are always nested as sub-documents.
+**Ours**: `@flatten` annotation supported. A flattened field is read/written by deriving a handler for the inner type and applying it directly to the parent document. Nested flattening works recursively.
 
-**Status**: Feature gap. Would require the case-class read/write path to know about the annotation and merge fields instead of nesting.
+**Status**: **Done** (see task 8). Caveat: conflicting inner field names are not detected at compile time.
 
 ## Same Behavior
 
