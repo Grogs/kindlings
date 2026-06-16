@@ -53,9 +53,9 @@ This is a friendly difference — users get default values out of the box.
 
 **Reference**: `FieldNaming.Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, plus a `FieldNaming` function for custom.
 
-**Ours**: User supplies a `String => String` function via `BsonDocumentHandlerConfig.fieldNameMapper`. We provide `withSnakeCaseFieldNames`, `withKebabCaseFieldNames`, and `withPascalCaseFieldNames` helpers. No `FieldNaming` trait.
+**Ours**: We provide both a structured `FieldNaming` trait (`Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, `Custom`) and the underlying `String => String` function via `BsonDocumentHandlerConfig.fieldNameMapper`. `withFieldNaming(naming)` and the existing `withSnakeCaseFieldNames` / `withKebabCaseFieldNames` / `withPascalCaseFieldNames` helpers are available.
 
-**Status**: **Partially done** (see task 8). Our API is more flexible (any function) but less structured than the reference's `FieldNaming` trait.
+**Status**: **Done** (see task 8).
 
 ### 6. `UnionType` / non-sealed ADTs
 
