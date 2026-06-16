@@ -52,6 +52,17 @@ final case class OuterFlatten(
     d: String
 )
 
+// TypeNaming
+object TreeModule {
+  sealed trait Node
+  final case class Leaf(data: String) extends Node
+  final case class Branch(left: Node, right: Node) extends Node
+}
+
+sealed trait Status
+case object Active extends Status
+case object Inactive extends Status
+
 // Value types (AnyVal)
 final case class WrapperId(value: Int) extends AnyVal
 final case class WithValueType(id: WrapperId, name: String)

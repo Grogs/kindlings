@@ -425,6 +425,54 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
     }
 
+    group("type naming") {
+      import hearth.kindlings.reactivemongobsonderivation.TypeNaming
+
+      test("FullName discriminator includes enclosing objects") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.FullName)
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[TreeModule.Node] =
+          KindlingsBsonDocumentHandler.derived[TreeModule.Node]
+
+        val leaf = TreeModule.Leaf("data")
+        val written = handler.writeTry(leaf).get
+
+        // Full name should include the enclosing object
+        val discriminator = written.get("className").map(_.asInstanceOf[BSONString].value)
+        assertEquals(discriminator, Some("hearth.kindlings.reactivemongobsonderivation.TreeModule.Leaf"))
+
+        assertEquals(handler.readDocument(written).get, leaf)
+      }
+
+      test("Custom type naming transforms simple name") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.Custom(_.toLowerCase))
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[SimpleEnum] =
+          KindlingsBsonDocumentHandler.derived[SimpleEnum]
+
+        val written = handler.writeTry(Foo).get
+        val discriminator = written.get("className").map(_.asInstanceOf[BSONString].value)
+        assertEquals(discriminator, Some("foo"))
+
+        assertEquals(handler.readDocument(written).get, Foo)
+      }
+
+      test("FullName normalizes case object symbols") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.FullName)
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Status] = KindlingsBsonDocumentHandler.derived[Status]
+
+        val written = handler.writeTry(Active).get
+        val discriminator = written.get("className").map(_.asInstanceOf[BSONString].value)
+        assertEquals(discriminator, Some("hearth.kindlings.reactivemongobsonderivation.Active"))
+
+        assertEquals(handler.readDocument(written).get, Active)
+      }
+    }
+
     group("config") {
       test("custom discriminator field name") {
         given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(discriminatorFieldName = Some("kind"))
