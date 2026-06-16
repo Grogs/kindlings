@@ -215,6 +215,7 @@ Reference implementation supports several annotations and config options that ou
 
 **Status**:
 - [x] Limitation #2: `@noneAsNull` annotation — `None` writes as `BSONNull`
+- [x] Limitation #4: `TypeNaming` (SimpleName, FullName, Custom) — discriminator value customization
 - [x] Limitation #5: structured `FieldNaming` trait + helpers (SnakeCase, PascalCase, KebabCase, Custom)
 - [x] Limitation #7: `@defaultValue` annotation — per-field default override
 - [x] Limitation #8: `@reader` / `@writer` annotations — per-field custom handlers
@@ -223,13 +224,13 @@ Reference implementation supports several annotations and config options that ou
 
 **Deferred limitations** (with reason for deferral):
 
-- [ ] **Limitation #4: `TypeNaming` (full vs short class name discriminator)** — Requires `Class[_]` plumbing in the macro. The reference exposes `TypeNaming` as a `Class[_] => String` function, but in our macro the discriminator dispatch is built at compile time from `Enum.exhaustiveChildren` (whose case names are already the simple class names), and Hearth's `Type[X]` for the existential types from `child.Underlying` doesn't give a direct `Class` handle (and `classOf[CT]` is rejected at macro compile time because the alias is an existential, not a class type). To fully support this we'd need either (a) a way to lift Hearth's `Type[X]` to a `Class[_]` at runtime, or (b) a sealed-trait `TypeNaming` with compile-time-known variants (`SimpleName`, `FullName`) and a custom-function escape hatch for the rest. Effort: medium-hard.
+- [x] **Limitation #4: `TypeNaming` (full vs short class name discriminator)** — Done. Added `TypeNaming` sealed trait with `SimpleName` (default), `FullName`, and `Custom(f)`. Implemented a Scala 3-specific `fullNameOf` helper using `quotes.reflect.TypeRepr` to get full class names. Discriminator dispatch uses compile-time constants when possible and runtime `config.typeNaming(...)` calls for custom/un-evaluable configs.
 - [x] **Limitation #5 (rest): structured `FieldNaming` trait** — Done. Added `FieldNaming` sealed trait with `Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, and `Custom` variants. `BsonDocumentHandlerConfig` still stores a `String => String` internally for backward compatibility; `withFieldNaming(naming)` converts to it.
 - [ ] **Limitation #6: `UnionType` for non-sealed ADTs** — Large feature. The reference supports `UnionType[UA \/ UB]` (scalaz `\/` either) for non-sealed trait unions with `AutomaticMaterialization`. Requires the user to explicitly enumerate subtypes and tie them together via the `\/` type. Effort: large. Likely not worth it unless users ask for it.
 - [x] **Limitation #11: `@Flatten` annotation** — Done. Added `@flatten` annotation. A flattened field is read/written by deriving a handler for the inner type and applying it directly to the parent document. Nested flattening works recursively. Caveat: conflicting inner field names are not detected at compile time.
 - [ ] **Limitation #10: `DisableWarnings` / `Verbose` options** — Not applicable. We use `Environment.reportInfo` / `Environment.reportErrorAndAbort` unconditionally (the same as the reference's default). If we ever need to suppress noisy macro logs, we can add a config option.
 
-**Test count**: 40 tests passing (was 27 before this task).
+**Test count**: 43 tests passing (was 27 before this task).
 
 ---
 
@@ -261,9 +262,10 @@ Deleted 6 unused runtime helpers from `BsonDocumentHandlerFactories`:
 
 ### ✅ Feature parity with reference (Task 8 partial)
 - `@noneAsNull` annotation (REFERENCE-COMPARISON #2)
+- `TypeNaming` (SimpleName, FullName, Custom) (REFERENCE-COMPARISON #4)
 - `FieldNaming` structured trait + helpers (REFERENCE-COMPARISON #5)
 - `@defaultValue` annotation (REFERENCE-COMPARISON #7)
 - `@reader` / `@writer` annotations (REFERENCE-COMPARISON #8)
 - `@flatten` annotation (REFERENCE-COMPARISON #11)
 - Ported `Seq[String]` and single-member case class tests
-- **40 tests passing** (was 27)
+- **43 tests passing** (was 27)

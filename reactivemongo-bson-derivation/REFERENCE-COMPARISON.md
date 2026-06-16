@@ -45,9 +45,9 @@ This is a friendly difference — users get default values out of the box.
 - Nested: `object TreeModule { sealed trait Node; case class Leaf extends Node }` → discriminator value: `TreeModule.Leaf` (full name with outer objects joined by `.`)
 - Configurable via `MacroConfiguration(typeNaming = TypeNaming.SimpleName)` to get just the simple name.
 
-**Ours**: Discriminator value is always the short class name (e.g., `Foo`, `Leaf`).
+**Ours**: We provide `TypeNaming.SimpleName` (default), `TypeNaming.FullName`, and `TypeNaming.Custom(f)`. Default is `SimpleName` to preserve backward compatibility.
 
-**Status**: **Deferred** (see task 8). Adding `TypeNaming` support requires `Class[_]` plumbing in the macro that doesn't fit cleanly with how we build the discriminator dispatch from `Enum.exhaustiveChildren`.
+**Status**: **Done** (see task 8). Reference defaults to `FullName`; we default to `SimpleName`.
 
 ### 5. Field naming strategies
 
