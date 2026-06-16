@@ -2,12 +2,12 @@ package hearth.kindlings.reactivemongobsonderivation
 
 /** Structured field naming strategy, mirroring ReactiveMongo-BSON's `FieldNaming`.
   *
-  * Use the predefined variants (`Identity`, `SnakeCase`, `PascalCase`, `KebabCase`) or provide a custom function
-  * via `FieldNaming.Custom(f)`.
+  * Use the predefined variants (`Identity`, `SnakeCase`, `PascalCase`, `KebabCase`) or provide a custom function via
+  * `FieldNaming.Custom(f)`.
   *
   * This is provided for users migrating from ReactiveMongo-BSON. The underlying config field remains a
-  * `String => String` function, so existing code using `BsonDocumentHandlerConfig.withFieldNameMapper(f)` continues
-  * to work.
+  * `String => String` function, so existing code using `BsonDocumentHandlerConfig.withFieldNameMapper(f)` continues to
+  * work.
   */
 sealed trait FieldNaming extends (String => String) {
   def apply(propertyName: String): String
