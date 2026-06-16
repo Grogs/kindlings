@@ -19,6 +19,9 @@ final case class BsonDocumentHandlerConfig(
   def withFieldNameMapper(f: String => String): BsonDocumentHandlerConfig =
     copy(fieldNameMapper = f)
 
+  def withFieldNaming(naming: FieldNaming): BsonDocumentHandlerConfig =
+    copy(fieldNameMapper = naming)
+
   def withSnakeCaseFieldNames: BsonDocumentHandlerConfig =
     copy(fieldNameMapper = BsonDocumentHandlerConfig.snakeCase)
 

@@ -450,6 +450,22 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(read, value)
       }
 
+      test("FieldNaming structured API") {
+        import hearth.kindlings.reactivemongobsonderivation.FieldNaming
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withFieldNaming(FieldNaming.SnakeCase)
+
+        val handler = KindlingsBsonDocumentHandler.derived[CamelCaseFields]
+        val value = CamelCaseFields("Alice", "Smith", 30)
+
+        val written = handler.writeTry(value).get
+        assertEquals(written.get("first_name").map(_.asInstanceOf[BSONString].value), Some("Alice"))
+        assertEquals(written.get("last_name").map(_.asInstanceOf[BSONString].value), Some("Smith"))
+        assertEquals(written.get("age_in_years").map(_.asInstanceOf[BSONInteger].value), Some(30))
+
+        val read = handler.readDocument(written).get
+        assertEquals(read, value)
+      }
+
       test("skipUnexpectedFields=true ignores unknown fields") {
         given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = true)
 
