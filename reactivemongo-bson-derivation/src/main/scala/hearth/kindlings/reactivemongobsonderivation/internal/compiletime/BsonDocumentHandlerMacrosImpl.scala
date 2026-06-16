@@ -6,7 +6,12 @@ import hearth.fp.effect.*
 import hearth.fp.syntax.*
 import hearth.std.*
 
-import hearth.kindlings.reactivemongobsonderivation.{BsonDocumentHandlerConfig, KindlingsBsonDocumentHandler}
+import hearth.kindlings.reactivemongobsonderivation.{
+  BsonDocumentHandlerConfig,
+  FieldNaming,
+  KindlingsBsonDocumentHandler,
+  TypeNaming
+}
 import reactivemongo.api.bson.BSONDocument
 
 import scala.util.Try
@@ -19,6 +24,11 @@ trait BsonDocumentHandlerMacrosImpl
   override protected def derivationSettingsNamespace: String = "reactivemongoBsonDerivation"
 
   // Types
+
+  /** Platform-specific way to get the full class name (e.g. `pkg.Outer.Inner`). Implemented in the Scala 3 companion
+    * using `quotes.reflect`.
+    */
+  protected def fullNameOf[A: Type]: String
 
   private[compiletime] object Types {
     def BsonDocumentHandler: Type.Ctor1[KindlingsBsonDocumentHandler] = Type.Ctor1.of[KindlingsBsonDocumentHandler]
@@ -155,9 +165,9 @@ trait BsonDocumentHandlerMacrosImpl
       configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentHandler[A]] = {
     val selfType: Option[??] = Some(Type[A].as_??)
-    // semiEval fails on configs with function fields, so don't use it for now
-    // TODO: Re-enable once we figure out how to handle function fields in semiEval
-    val evaluatedConfig: Option[BsonDocumentHandlerConfig] = None
+    // semiEval now works for common configs because fieldNaming/typeNaming are sealed traits.
+    // It falls back to None when the config contains custom function variants (FieldNaming.Custom / TypeNaming.Custom).
+    val evaluatedConfig: Option[BsonDocumentHandlerConfig] = configExpr.semiEval.toOption
 
     if (Type[A] =:= Type.of[Nothing].asInstanceOf[Type[A]] || Type[A] =:= Type.of[Any].asInstanceOf[Type[A]])
       Environment.reportErrorAndAbort(
@@ -1242,8 +1252,6 @@ trait BsonDocumentHandlerMacrosImpl
 
         case Some(childrenNel) =>
           // Extract discriminator field name at compile time if possible, otherwise use default
-          // We don't try to splice the config at runtime because it contains function fields
-          // that can't be properly serialized in the generated code
           val discriminatorFieldExpr: Expr[String] =
             ctx.evaluatedConfig.flatMap(_.discriminatorFieldName) match {
               case Some(discriminator) =>
@@ -1257,14 +1265,46 @@ trait BsonDocumentHandlerMacrosImpl
                   config.discriminatorFieldName.getOrElse("className")
                 }
             }
-          val knownNames: String = childrenList.map(_._1).mkString(", ")
+
+          // Build a function that produces the discriminator Expr[String] for a child from its simple/full names.
+          // For compile-time-known SimpleName/FullName we emit a constant; otherwise we call config.typeNaming at runtime.
+          val discriminatorFor: (String, String) => Expr[String] =
+            ctx.evaluatedConfig.map(_.typeNaming) match {
+              case Some(TypeNaming.SimpleName) => (simpleName, _) => Expr(simpleName)
+              case Some(TypeNaming.FullName)   => (_, fullName) => Expr(fullName)
+              case _                           =>
+                (simpleName, fullName) =>
+                  Expr.quote {
+                    Expr
+                      .splice(ctx.config)
+                      .typeNaming(
+                        Expr.splice(Expr(simpleName)),
+                        Expr.splice(Expr(fullName))
+                      )
+                  }
+            }
+
+          val childrenWithDiscriminators: List[(Expr[String], ??<:[A])] = childrenList.map { case (_, child) =>
+            import child.Underlying as ChildType
+            val simpleName = Type[ChildType].shortName
+            val fullName = fullNameOf[ChildType]
+            (discriminatorFor(simpleName, fullName), child)
+          }
+          val childrenDiscriminatorNel = NonEmptyList(childrenWithDiscriminators.head, childrenWithDiscriminators.tail)
+
+          val knownNames: String = childrenList
+            .map { case (_, child) =>
+              import child.Underlying as ChildType
+              Type[ChildType].shortName
+            }
+            .mkString(", ")
           val knownNamesExpr = Expr(knownNames)
 
           // Derive typed read-dispatch functions for each child
-          childrenNel
-            .parTraverse { case (caseName, child) =>
+          childrenDiscriminatorNel
+            .parTraverse { case (discriminatorNameExpr, child) =>
               import child.Underlying as ChildType
-              deriveChildReadDispatch[A, ChildType](caseName, discriminatorFieldExpr)
+              deriveChildReadDispatch[A, ChildType](discriminatorNameExpr, discriminatorFieldExpr)
             }
             .flatMap { readDispatchersNel =>
               val readDispatchers = readDispatchersNel.toList
@@ -1300,19 +1340,17 @@ trait BsonDocumentHandlerMacrosImpl
                     enumm
                       .parMatchOn[MIO, scala.util.Try[BSONDocument]](valueExpr) { matched =>
                         import matched.{value as enumCaseValue, Underlying as ChildType}
-                        // Find case name by type comparison
-                        val caseName: String = childrenList
-                          .find { case (_, child) =>
-                            import child.Underlying as CT
-                            Type[ChildType] =:= Type[CT]
-                          }
-                          .map(_._1)
-                          .getOrElse(Type[ChildType].shortName)
+                        // Compute discriminator value from the configured TypeNaming
+                        val simpleName = Type[ChildType].shortName
+                        val fullName = fullNameOf[ChildType]
+                        val discriminatorNameExpr: Expr[String] = discriminatorFor(simpleName, fullName)
                         Expr.singletonOf[ChildType] match {
                           case Some(_) =>
                             MIO.pure(Expr.quote {
                               scala.util.Success(
-                                BSONDocument(Expr.splice(discriminatorFieldExpr) -> Expr.splice(Expr(caseName)))
+                                BSONDocument(
+                                  Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
+                                )
                               )
                             })
                           case None =>
@@ -1321,7 +1359,9 @@ trait BsonDocumentHandlerMacrosImpl
                                 val childDoc = Expr.splice(childHandler).writeTry(Expr.splice(enumCaseValue)).get
                                 scala.util.Success(
                                   childDoc ++
-                                    BSONDocument(Expr.splice(discriminatorFieldExpr) -> Expr.splice(Expr(caseName)))
+                                    BSONDocument(
+                                      Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
+                                    )
                                 )
                               }
                             }
@@ -1352,10 +1392,9 @@ trait BsonDocumentHandlerMacrosImpl
 
     /** Derives a read-dispatch function for a single enum child. */
     private def deriveChildReadDispatch[A: DerivationCtx, ChildType: Type](
-        caseName: String,
+        discriminatorNameExpr: Expr[String],
         discriminatorFieldExpr: Expr[String]
-    ): MIO[(Expr[BSONDocument], Expr[scala.util.Try[A]]) => Expr[scala.util.Try[A]]] = {
-      val caseNameExpr = Expr(caseName)
+    ): MIO[(Expr[BSONDocument], Expr[scala.util.Try[A]]) => Expr[scala.util.Try[A]]] =
 
       // Check if child is a singleton - return it directly without deriving a handler
       Expr.singletonOf[ChildType] match {
@@ -1363,7 +1402,7 @@ trait BsonDocumentHandlerMacrosImpl
           MIO.pure { (docExpr: Expr[BSONDocument], elseExpr: Expr[scala.util.Try[A]]) =>
             Expr.quote {
               Expr.splice(docExpr).get(Expr.splice(discriminatorFieldExpr)) match {
-                case Some(bsv) if bsv == reactivemongo.api.bson.BSONString(Expr.splice(caseNameExpr)) =>
+                case Some(bsv) if bsv == reactivemongo.api.bson.BSONString(Expr.splice(discriminatorNameExpr)) =>
                   scala.util.Success(Expr.splice(singleton).asInstanceOf[A])
                 case _ => Expr.splice(elseExpr)
               }
@@ -1374,13 +1413,12 @@ trait BsonDocumentHandlerMacrosImpl
             childHandler => (docExpr: Expr[BSONDocument], elseExpr: Expr[scala.util.Try[A]]) =>
               Expr.quote {
                 Expr.splice(docExpr).get(Expr.splice(discriminatorFieldExpr)) match {
-                  case Some(bsv) if bsv == reactivemongo.api.bson.BSONString(Expr.splice(caseNameExpr)) =>
+                  case Some(bsv) if bsv == reactivemongo.api.bson.BSONString(Expr.splice(discriminatorNameExpr)) =>
                     Expr.splice(childHandler).readDocument(Expr.splice(docExpr)).map(_.asInstanceOf[A])
                   case _ => Expr.splice(elseExpr)
                 }
               }
           }
       }
-    }
   }
 }
