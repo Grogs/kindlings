@@ -44,7 +44,9 @@ The `derived` macro picks up the implicit `BsonDocumentHandlerConfig` from scope
 | `AnyVal` value types | Treated as their underlying type |
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array` |
 | Maps | `Map[String, V]` (key type fixed to `String`) |
-| Default field values | Applied when field is missing on read |
+| Default field values | Applied when field is missing on read; `@defaultValue` for per-field override |
+| `@fieldName` / `@noneAsNull` / `@reader` / `@writer` | Per-field annotations supported |
+| Field naming | `String => String` or structured `FieldNaming` |
 
 ## Configuration
 
@@ -63,23 +65,40 @@ given BsonDocumentHandlerConfig = customConfig
 val handler = KindlingsBsonDocumentHandler.derived[Person]
 ```
 
-### `fieldNameMapper: String => String`
+### Field naming
 
-Transform field names during read and write. Default: `identity`.
+Transform field names during read and write. Default: identity.
 
-Helpers:
-- `BsonDocumentHandlerConfig.snakeCase`
-- `BsonDocumentHandlerConfig.kebabCase`
+Use the helpers on `BsonDocumentHandlerConfig`:
 
 ```scala
-case class CamelCaseFields(firstName: String, lastName: String)
+case class CamelCaseFields(firstName: String, lastName: String, ageInYears: Int)
 
 given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withSnakeCaseFieldNames
 val handler = KindlingsBsonDocumentHandler.derived[CamelCaseFields]
 
-handler.writeTry(CamelCaseFields("Alice", "Smith")).get
-// BSONDocument("first_name" -> "Alice", "last_name" -> "Smith")
+handler.writeTry(CamelCaseFields("Alice", "Smith", 30)).get
+// BSONDocument("first_name" -> "Alice", "last_name" -> "Smith", "age_in_years" -> 30)
 ```
+
+Available helpers:
+- `withFieldNameMapper(f: String => String)` — arbitrary function
+- `withFieldNaming(naming: FieldNaming)` — structured strategy (see below)
+- `withSnakeCaseFieldNames`
+- `withKebabCaseFieldNames`
+- `withPascalCaseFieldNames`
+
+#### `FieldNaming` structured API
+
+For users migrating from ReactiveMongo-BSON, a structured `FieldNaming` trait is available:
+
+```scala
+import hearth.kindlings.reactivemongobsonderivation.FieldNaming
+
+given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withFieldNaming(FieldNaming.SnakeCase)
+```
+
+Variants: `Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, and `Custom(f)`.
 
 ### `discriminatorFieldName: Option[String]`
 
@@ -107,6 +126,61 @@ import hearth.kindlings.reactivemongobsonderivation.annotations.fieldName
 case class User(
   @fieldName("user_id") id: String,
   @fieldName("created_at") createdAt: Long
+)
+```
+
+### `@noneAsNull`
+
+By default, `None` values are omitted from the written document. Annotate an `Option` field with `@noneAsNull` to write `None` as `BSONNull` instead.
+
+```scala
+import hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull
+
+case class Record(
+  name: String,
+  @noneAsNull description: Option[String]
+)
+
+val handler = KindlingsBsonDocumentHandler.derived[Record]
+handler.writeTry(Record("x", None)).get
+// BSONDocument("name" -> "x", "description" -> BSONNull)
+```
+
+On read, `BSONNull` is always decoded as `None`, whether or not the annotation is present.
+
+### `@defaultValue`
+
+Provide a default value for a field that doesn't have a Scala-level default. Applied when the field is missing on read.
+
+```scala
+import hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue
+
+case class Config(
+  name: String,
+  @defaultValue(8080) port: Int
+)
+
+val handler = KindlingsBsonDocumentHandler.derived[Config]
+handler.readDocument(BSONDocument("name" -> "app")).get
+// Config("app", 8080)
+```
+
+### `@reader` and `@writer`
+
+Override the BSON reader or writer for a specific field. Useful when a field needs a custom codec without defining an implicit for the whole type.
+
+```scala
+import reactivemongo.api.bson.{ BSONReader, BSONWriter }
+import hearth.kindlings.reactivemongobsonderivation.annotations.{ reader, writer }
+
+object codecs {
+  implicit val upperReader: BSONReader[String] = BSONReader.collect { case reactivemongo.api.bson.BSONString(s) => s.toUpperCase }
+  implicit val lowerWriter: BSONWriter[String] = BSONWriter[String](s => reactivemongo.api.bson.BSONString(s.toLowerCase))
+}
+
+case class Styled(
+  @reader(codecs.upperReader) label: String,
+  @writer(codecs.lowerWriter) value: String
 )
 ```
 
@@ -157,3 +231,6 @@ handler.readDocument(BSONDocument()).get
 - JVM only (Scala.js / Scala Native are not applicable — `reactivemongo-bson-api` is JVM-only)
 - `Map` key type is fixed to `String`; non-`String` keys are not supported
 - Sealed trait hierarchies must be reachable from the derived type (no orphan sub-hierarchies)
+- Discriminator value is always the short class name (`TypeNaming` customization is a future task)
+- No `@Flatten` annotation support
+- No `UnionType` for non-sealed ADTs
