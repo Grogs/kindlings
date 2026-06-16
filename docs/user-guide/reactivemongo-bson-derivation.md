@@ -45,7 +45,7 @@ The `derived` macro picks up the implicit `BsonDocumentHandlerConfig` from scope
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array` |
 | Maps | `Map[String, V]` (key type fixed to `String`) |
 | Default field values | Applied when field is missing on read; `@defaultValue` for per-field override |
-| `@fieldName` / `@noneAsNull` / `@reader` / `@writer` | Per-field annotations supported |
+| `@fieldName` / `@noneAsNull` / `@reader` / `@writer` / `@flatten` | Per-field annotations supported |
 | Field naming | `String => String` or structured `FieldNaming` |
 
 ## Configuration
@@ -184,6 +184,25 @@ case class Styled(
 )
 ```
 
+### `@flatten`
+
+Flatten a nested case class so its fields are read/written directly in the parent document.
+
+```scala
+import hearth.kindlings.reactivemongobsonderivation.annotations.flatten
+
+case class Range(start: Int, end: Int)
+case class LabelledRange(name: String, @flatten range: Range)
+
+val handler = KindlingsBsonDocumentHandler.derived[LabelledRange]
+
+handler.writeTry(LabelledRange("r1", Range(2, 5))).get
+// BSONDocument("name" -> "r1", "start" -> 2, "end" -> 5)
+
+handler.readDocument(BSONDocument("name" -> "r1", "start" -> 2, "end" -> 5)).get
+// LabelledRange("r1", Range(2, 5))
+```
+
 ## Examples
 
 ### Sealed trait / enum
@@ -232,5 +251,5 @@ handler.readDocument(BSONDocument()).get
 - `Map` key type is fixed to `String`; non-`String` keys are not supported
 - Sealed trait hierarchies must be reachable from the derived type (no orphan sub-hierarchies)
 - Discriminator value is always the short class name (`TypeNaming` customization is a future task)
-- No `@Flatten` annotation support
+- `@flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
 - No `UnionType` for non-sealed ADTs
