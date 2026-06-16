@@ -35,6 +35,23 @@ final case class WordLover(name: String, words: Seq[String])
 // Single member case class
 final case class SingleBigDecimal(value: BigDecimal)
 
+// Flatten annotation
+final case class Range(start: Int, end: Int)
+final case class LabelledRange(
+    name: String,
+    @hearth.kindlings.reactivemongobsonderivation.annotations.flatten range: Range
+)
+
+final case class InnerFlatten(a: Int, b: Int)
+final case class MiddleFlatten(
+    @hearth.kindlings.reactivemongobsonderivation.annotations.flatten inner: InnerFlatten,
+    c: String
+)
+final case class OuterFlatten(
+    @hearth.kindlings.reactivemongobsonderivation.annotations.flatten middle: MiddleFlatten,
+    d: String
+)
+
 // Value types (AnyVal)
 final case class WrapperId(value: Int) extends AnyVal
 final case class WithValueType(id: WrapperId, name: String)
