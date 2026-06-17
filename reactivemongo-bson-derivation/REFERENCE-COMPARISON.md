@@ -105,22 +105,6 @@ This is a friendly difference — users get default values out of the box.
 
 **Status**: **Done** (see task 8). Caveat: conflicting inner field names are not detected at compile time.
 
-### 12. Value classes (`AnyVal`)
-
-**Reference**: Value classes are unwrapped to their underlying type in the parent document.
-
-**Ours**: Value classes are wrapped as `{"value": <underlying>}` sub-documents.
-
-**Status**: Intentional difference / future improvement. Our `HandleAsValueTypeRule` derives a document handler for the value class. To match the reference we would need to detect `AnyVal` fields and unwrap them inline.
-
-### 13. `BSONObjectID` fields
-
-**Reference**: `BSONObjectID` fields are handled via the built-in `BSONHandler[BSONObjectID]`.
-
-**Ours**: Deriving a handler for a case class containing a `BSONObjectID` field currently triggers a `StackOverflowError` during macro expansion.
-
-**Status**: Known bug / limitation. Workaround: use `String` for the Object-ID field, or define the handler manually.
-
 ## Same Behavior
 
 - **Default discriminator field name**: `"className"` (both)

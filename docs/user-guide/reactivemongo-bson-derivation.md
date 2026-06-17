@@ -265,6 +265,5 @@ handler.readDocument(BSONDocument()).get
 - `Map` key type is fixed to `String`; non-`String` keys are not supported
 - Sealed trait hierarchies must be reachable from the derived type (no orphan sub-hierarchies)
 - `@flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
-- Value classes (`AnyVal`) are wrapped as `{"value": <underlying>}` sub-documents rather than unwrapped inline
-- `BSONObjectID` fields in case classes currently cause a macro stack overflow; use `String` as a workaround
+- Case class fields of collection type with `Option[CaseClass]` elements are not yet supported (e.g. `items: Seq[Option[MyCaseClass]]`)
 - No `UnionType` for non-sealed ADTs
