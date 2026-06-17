@@ -39,7 +39,7 @@ The `derived` macro picks up the implicit `BsonDocumentHandlerConfig` from scope
 | Type | Notes |
 |------|-------|
 | Case classes | All primitive fields, nested case classes, generics |
-| Sealed traits / Scala 3 enums | Discriminator field `"className"` by default |
+| Sealed traits / Scala 3 enums | Discriminator field `"className"` (full type name by default, e.g. `"com.example.Tree.Leaf"`) |
 | Options | `None` decodes from missing field or `BSONNull` |
 | `AnyVal` value types | Treated as their underlying type |
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array` |
