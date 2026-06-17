@@ -196,19 +196,29 @@ Migration: Refactor hierarchies to use sealed traits, or provide manual
 
 ### 7. No `@Ignore` annotation
 
-**Reference**: `@Ignore` skips a field during serialization.
+**Reference**: `@Ignore` on a field means it is never serialized to BSON
+(completely absent from the document). If the field must be readable,
+a default must be provided.
 **Kindlings**: Not supported.
 
-Migration: Use `Option` with `None` default, or provide a custom reader/writer
-via `@reader`/`@writer`.
+Migration: Use `Option` with `None` default. The field will be written as
+missing/null and read back as `None`, which is semantically similar for
+most use cases. For fields that should never appear in BSON, provide a
+custom reader/writer via `@reader`/`@writer` that skips the field.
 
-### 8. Map keys are `String` only
+### 8. Non-`String` map keys
 
-**Reference**: Supports non-`String` keys with custom key readers/writers.
-**Kindlings**: Only `Map[String, V]`.
+**Reference**: Supports non-`String` keys (e.g. `Map[Locale, V]`, `Map[UUID, V]`)
+via the `KeyReader[T]` / `KeyWriter[T]` type classes from reactivemongo-bson-api.
 
-Migration: Use `Map[String, V]` in your models. For non-String keys, convert
-before/after BSON serialization.
+**Kindlings**: Supported. The macro summons `KeyReader[K]` and `KeyWriter[K]`
+from implicit scope when deriving `Map[K, V]` handlers. Built-in instances
+for `String`, `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`,
+`BigDecimal`, `BigInt`, `Locale`, `UUID`, and `AnyVal` are available from
+reactivemongo-bson-api. Custom key types need an explicit `KeyReader[T]` /
+`KeyWriter[T]` implicit.
+
+Migration: No change needed — should work out of the box.
 
 ## Migration Steps
 

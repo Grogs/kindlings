@@ -43,7 +43,7 @@ The `derived` macro picks up the implicit `BsonDocumentHandlerConfig` from scope
 | Options | `None` decodes from missing field or `BSONNull` |
 | `AnyVal` value types | Treated as their underlying type |
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array` |
-| Maps | `Map[String, V]` (key type fixed to `String`) |
+| Maps | `Map[K, V]` (any key type with `KeyReader[K]`/`KeyWriter[K]`) |
 | Default field values | Applied when field is missing on read; `@defaultValue` for per-field override |
 | `@fieldName` / `@noneAsNull` / `@reader` / `@writer` / `@flatten` | Per-field annotations supported |
 | Field naming | `String => String` or structured `FieldNaming` |
@@ -262,8 +262,6 @@ handler.readDocument(BSONDocument()).get
 
 - Scala 3 only (Scala 2.13 cross-compilation is a future task)
 - JVM only (Scala.js / Scala Native are not applicable — `reactivemongo-bson-api` is JVM-only)
-- `Map` key type is fixed to `String`; non-`String` keys are not supported
 - Sealed trait hierarchies must be reachable from the derived type (no orphan sub-hierarchies)
 - `@flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
-- Case class fields of collection type with `Option[CaseClass]` elements are not yet supported (e.g. `items: Seq[Option[MyCaseClass]]`)
 - No `UnionType` for non-sealed ADTs
