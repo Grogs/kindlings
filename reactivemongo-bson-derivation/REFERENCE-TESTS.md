@@ -33,9 +33,10 @@ The following `MacroSpec` tests are covered by our test suite:
 | `"be generated for class class with self reference"` | `be generated for class with self reference` | |
 | `"support @Flatten annotation"` | `@flatten merges inner case class fields into parent document` | Positive cases only |
 | `"support @Reader & @Writer annotations"` | `round-trip with @reader and @writer` | |
-| `"be generated for Value class"` | `be generated for value class (wrapped)` | Adapted to our wrapping behavior |
+| `"be generated for Value class"` | `be generated for value class` | |
 | Default-value tests | `default values from Scala-level defaults`, `default values from @defaultValue annotation` | |
 | Map tests | `Map[String, Int]`, `Map with String keys` | |
+| `BSONObjectID` field | `support overriding keys with annotations` | Uses `BSONObjectID` |
 | `TypeNaming` tests | `FullName discriminator includes enclosing objects`, `Custom type naming transforms simple name` | New feature tests |
 | `@flatten` nested test | `@flatten works with nested flattening` | New feature test |
 
@@ -98,6 +99,16 @@ our sealed-trait tests; only the discriminator string differs.
   **Not ported.** Our current implementation does not support combining `@flatten`
   with `@reader`/`@writer` on the same field. `@flatten` takes precedence.
 
+### Collection fields with `Option[CaseClass]` elements (`"support generic case class GenSeq"`)
+
+**Adapted.** The reference test uses `GenSeq[Option[SingleBigDecimal]]`, where the
+`items` field is `Seq[Option[SingleBigDecimal]]`. Our case-class rule handles
+collection-typed fields by summoning a `BSONReader`/`BSONWriter` for the whole
+field type. It does not yet derive inline `BSONReader`/`BSONWriter` instances
+for collection types, so `Seq[Option[SingleBigDecimal]]` cannot be resolved.
+We test `GenSeq[String]` instead. This would require adding collection (and map)
+reader/writer derivation to `resolveBsonReader`/`resolveBsonWriter`.
+
 ### Strict BSONNull handling for Option (`"not support type mismatch for optional value"`, `"support null for optional value"` with strict semantics)
 
 **Not ported.** We always decode `BSONNull` as `None` and are more permissive
@@ -107,17 +118,11 @@ than the reference (see `REFERENCE-COMPARISON.md` #3).
 
 **Not ported.** Our `Map` support is restricted to `Map[String, V]`.
 
-### BSONObjectID fields
-
-**Not ported.** Deriving a handler for a case class containing a `BSONObjectID`
-field currently triggers a `StackOverflowError` during macro expansion. This is
-a known bug/limitation.
-
 ### `@defaultValue` with `Option` literal (`WithDefaultValues2.score: Option[Float]`)
 
-**Adapted.** We test `title` and `range` defaults from `@defaultValue` but do
-not assert on the `Option[Float]` default. The macro extracts the annotation
-but the `Some(45.6f)` value is not applied correctly at read time.
+**Ported.** Fixed by making `defaultValue[T]` covariant and using `<:<` for
+annotation lookup, so `@defaultValue(Some(45.6f))` on an `Option[Float]` field
+is found and applied correctly.
 
 ## Coverage summary
 
@@ -126,4 +131,4 @@ but the `Some(45.6f)` value is not applied correctly at read time.
 - **Ported / adapted**: ~22 top-level behaviors.
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   `@Ignore`, separate Reader/Writer derivation, strict `BSONNull` semantics) plus
-  a few edge cases (`BSONObjectID`, `Option` `@defaultValue`, non-String map keys).
+  collection fields with `Option[CaseClass]` elements and non-`String` map keys.
