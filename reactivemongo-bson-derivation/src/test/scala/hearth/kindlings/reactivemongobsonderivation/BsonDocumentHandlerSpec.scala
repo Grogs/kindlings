@@ -652,10 +652,13 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
       test("support generic case class GenSeq") {
         @scala.annotation.nowarn("msg=is never used|unused")
-        val handler: KindlingsBsonDocumentHandler[GenSeq[String]] =
-          KindlingsBsonDocumentHandler.derived[GenSeq[String]]
+        val handler: KindlingsBsonDocumentHandler[GenSeq[Option[SingleBigDecimal]]] =
+          KindlingsBsonDocumentHandler.derived[GenSeq[Option[SingleBigDecimal]]]
 
-        val value = GenSeq(Seq("hello", "world"), 2)
+        val value = GenSeq(
+          Seq(Some(SingleBigDecimal(BigDecimal("1.23"))), None, Some(SingleBigDecimal(BigDecimal("4.56")))),
+          2
+        )
         val written = handler.writeTry(value).get
         assertEquals(handler.readDocument(written).get, value)
       }
