@@ -1,11 +1,11 @@
 package hearth.kindlings.reactivemongobsonderivation
 
 // Field name annotation
-import hearth.kindlings.reactivemongobsonderivation.annotations.fieldName
-import hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull
-import hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue
-import hearth.kindlings.reactivemongobsonderivation.annotations.reader
-import hearth.kindlings.reactivemongobsonderivation.annotations.writer
+import hearth.kindlings.reactivemongobsonderivation.annotations.FieldName
+import hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull
+import hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue
+import hearth.kindlings.reactivemongobsonderivation.annotations.Reader
+import hearth.kindlings.reactivemongobsonderivation.annotations.Writer
 
 // Simple types
 final case class Empty()
@@ -16,13 +16,13 @@ final case class PersonWithAddress(name: String, address: Address)
 // Option fields
 final case class MaybeName(name: Option[String])
 final case class MaybeNested(address: Option[Address])
-final case class MaybeAsNull(@noneAsNull name: Option[String])
-final case class MaybeNestedAsNull(@noneAsNull address: Option[Address])
+final case class MaybeAsNull(@NoneAsNull name: Option[String])
+final case class MaybeNestedAsNull(@NoneAsNull address: Option[Address])
 
 // Default values
 final case class WithDefault(name: String = "unknown")
 final case class OptionalDefault(name: Option[String] = Some("unknown"))
-final case class WithAnnotatedDefaults(id: Int, @defaultValue("anon") name: String, @defaultValue(0) score: Int)
+final case class WithAnnotatedDefaults(id: Int, @DefaultValue("anon") name: String, @DefaultValue(0) score: Int)
 
 // Collection fields
 final case class WithList(names: List[String])
@@ -39,16 +39,16 @@ final case class SingleBigDecimal(value: BigDecimal)
 final case class Range(start: Int, end: Int)
 final case class LabelledRange(
     name: String,
-    @hearth.kindlings.reactivemongobsonderivation.annotations.flatten range: Range
+    @hearth.kindlings.reactivemongobsonderivation.annotations.Flatten range: Range
 )
 
 final case class InnerFlatten(a: Int, b: Int)
 final case class MiddleFlatten(
-    @hearth.kindlings.reactivemongobsonderivation.annotations.flatten inner: InnerFlatten,
+    @hearth.kindlings.reactivemongobsonderivation.annotations.Flatten inner: InnerFlatten,
     c: String
 )
 final case class OuterFlatten(
-    @hearth.kindlings.reactivemongobsonderivation.annotations.flatten middle: MiddleFlatten,
+    @hearth.kindlings.reactivemongobsonderivation.annotations.Flatten middle: MiddleFlatten,
     d: String
 )
 
@@ -69,8 +69,8 @@ final case class WithValueType(id: WrapperId, name: String)
 
 // Field name annotation
 final case class AnnotatedFields(
-    @fieldName("first_name") firstName: String,
-    @fieldName("years_old") age: Int
+    @FieldName("first_name") firstName: String,
+    @FieldName("years_old") age: Int
 )
 
 // Enum / sealed trait
@@ -94,8 +94,8 @@ final case class TreeLeaf(data: String) extends Tree
 
 // @reader / @writer annotations
 final case class WithPerFieldIO(
-    @reader(reactivemongo.api.bson.BSONStringHandler) id: String,
-    @writer(reactivemongo.api.bson.BSONStringHandler) name: String
+    @Reader(reactivemongo.api.bson.BSONStringHandler) id: String,
+    @Writer(reactivemongo.api.bson.BSONStringHandler) name: String
 )
 
 // Reference-ported test data
@@ -104,7 +104,7 @@ final case class Pet(name: String, owner: Person)
 final case class Primitives(dbl: Double, str: String, bl: Boolean, int: Int, long: Long)
 
 final case class Optional(name: String, value: Option[String])
-final case class OptionalAsNull(name: String, @noneAsNull value: Option[String])
+final case class OptionalAsNull(name: String, @NoneAsNull value: Option[String])
 final case class OptionalSingle(value: Option[String])
 final case class OptionalGeneric[T](v: Int, opt: Option[T])
 
@@ -134,7 +134,7 @@ object NestModule {
   case class Nested(name: String)
 }
 
-final case class RenamedId(@fieldName("_id") myID: reactivemongo.api.bson.BSONObjectID, value: String)
+final case class RenamedId(@FieldName("_id") myID: reactivemongo.api.bson.BSONObjectID, value: String)
 
 final case class WithDefaultValues1(
     id: Int,
@@ -145,9 +145,9 @@ final case class WithDefaultValues1(
 
 final case class WithDefaultValues2(
     id: Int,
-    @defaultValue("default2") title: String,
-    @defaultValue(Some(45.6f)) score: Option[Float],
-    @defaultValue(Range(7, 11)) range: Range
+    @DefaultValue("default2") title: String,
+    @DefaultValue(Some(45.6f)) score: Option[Float],
+    @DefaultValue(Range(7, 11)) range: Range
 )
 
 final case class WithMap1(name: String, localizedDescription: Map[String, String])
@@ -163,6 +163,6 @@ final case class WithValueTypeField(name: String, id: WithValueClass)
 
 final case class WithIgnoredField(
     id: Int,
-    @hearth.kindlings.reactivemongobsonderivation.annotations.ignore visible: Boolean = true,
+    @hearth.kindlings.reactivemongobsonderivation.annotations.Ignore visible: Boolean = true,
     name: String
 )

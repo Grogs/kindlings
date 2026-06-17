@@ -13,7 +13,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | `"handle primitives"` | `handle primitives` | |
 | `"support nesting"` | `support nesting` | |
 | `"support optional"` / `using default instances` | `support optional` | |
-| `"write empty option as null"` | `support optional as null` | Uses `@noneAsNull` |
+| `"write empty option as null"` | `support optional as null` | Uses `@NoneAsNull` |
 | `"support single member options"` | `support single member options` | |
 | `"support generic optional value"` | `support generic optional value` | Handler only |
 | `"support generic case class Foo"` | `support generic case class Foo` | |
@@ -29,16 +29,16 @@ The following `MacroSpec` tests are covered by our test suite:
 | `"respect field naming"` / `with macro-configured handler (SnakeCase)` | `snake_case field name mapper` | |
 | `"automate Union on sealed traits with simple name"` | `FullName normalizes case object symbols` | Adapted to test `TypeNaming.FullName` |
 | `"handle recursive structure"` / `with recursive auto-materialization` | `recursive structure (Tree)` | |
-| `"support overriding keys with annotations"` | `support overriding keys with annotations` | Uses `@fieldName` instead of `@Key` |
+| `"support overriding keys with annotations"` | `support overriding keys with annotations` | Uses `@FieldName` instead of `@Key` |
 | `"be generated for class class with self reference"` | `be generated for class with self reference` | |
-| `"support @Flatten annotation"` | `@flatten merges inner case class fields into parent document` | Positive cases only |
+| `"support @Flatten annotation"` | `@Flatten merges inner case class fields into parent document` | Positive cases only |
 | `"support @Reader & @Writer annotations"` | `round-trip with @reader and @writer` | |
 | `"be generated for Value class"` | `be generated for value class` | |
 | Default-value tests | `default values from Scala-level defaults`, `default values from @defaultValue annotation` | |
 | Map tests | `Map[String, Int]`, `Map with String keys` | |
 | `BSONObjectID` field | `support overriding keys with annotations` | Uses `BSONObjectID` |
 | `TypeNaming` tests | `FullName discriminator includes enclosing objects`, `Custom type naming transforms simple name` | New feature tests |
-| `@flatten` nested test | `@flatten works with nested flattening` | New feature test |
+| `@Flatten` nested test | `@Flatten works with nested flattening` | New feature test |
 
 ## Reference tests not ported
 
@@ -96,8 +96,8 @@ our sealed-trait tests; only the discriminator string differs.
 ### Specific annotation combinations
 
 - `@Flatten @Writer(...) @Reader(...)` on the same field (`"support @Reader & @Writer annotations"`)
-  **Not ported.** Our current implementation does not support combining `@flatten`
-  with `@reader`/`@writer` on the same field. `@flatten` takes precedence.
+  **Not ported.** Our current implementation does not support combining `@Flatten`
+  with `@Reader`/`@Writer` on the same field. `@Flatten` takes precedence.
 
 ### Strict BSONNull handling for Option (`"not support type mismatch for optional value"`, `"support null for optional value"` with strict semantics)
 
@@ -109,10 +109,10 @@ than the reference (see `REFERENCE-COMPARISON.md` #3).
 **Ported.** Our map handler now summons `KeyReader[K]`/`KeyWriter[K]` for
 non-String key types. Tested with `java.util.Locale` and `java.util.UUID` keys.
 
-### `@defaultValue` with `Option` literal (`WithDefaultValues2.score: Option[Float]`)
+### `@DefaultValue` with `Option` literal (`WithDefaultValues2.score: Option[Float]`)
 
 **Ported.** Fixed by making `defaultValue[T]` covariant and using `<:<` for
-annotation lookup, so `@defaultValue(Some(45.6f))` on an `Option[Float]` field
+annotation lookup, so `@DefaultValue(Some(45.6f))` on an `Option[Float]` field
 is found and applied correctly.
 
 ## Coverage summary

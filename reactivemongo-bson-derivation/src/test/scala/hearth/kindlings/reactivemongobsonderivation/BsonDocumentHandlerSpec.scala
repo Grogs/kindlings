@@ -101,7 +101,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.writeTry(value).get, doc)
       }
 
-      test("@noneAsNull - Some writes normally") {
+      test("@NoneAsNull - Some writes normally") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[MaybeAsNull] =
           KindlingsBsonDocumentHandler.derived[MaybeAsNull]
@@ -113,7 +113,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.readDocument(doc).get, value)
       }
 
-      test("@noneAsNull - None writes as BSONNull") {
+      test("@NoneAsNull - None writes as BSONNull") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[MaybeAsNull] =
           KindlingsBsonDocumentHandler.derived[MaybeAsNull]
@@ -125,7 +125,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.readDocument(doc).get, value)
       }
 
-      test("@noneAsNull - nested case class type") {
+      test("@NoneAsNull - nested case class type") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[MaybeNestedAsNull] =
           KindlingsBsonDocumentHandler.derived[MaybeNestedAsNull]
@@ -429,7 +429,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
     group("flatten annotation") {
 
-      test("@flatten merges inner case class fields into parent document") {
+      test("@Flatten merges inner case class fields into parent document") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[LabelledRange] =
           KindlingsBsonDocumentHandler.derived[LabelledRange]
@@ -441,7 +441,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.readDocument(expectedDoc).get, value)
       }
 
-      test("@flatten works with nested flattening") {
+      test("@Flatten works with nested flattening") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[OuterFlatten] =
           KindlingsBsonDocumentHandler.derived[OuterFlatten]
@@ -855,14 +855,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(value).get
         assertEquals(handler.readDocument(written).get, value)
       }
-      test("@ignore field is not serialized") {
+      test("@Ignore field is not serialized") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[WithIgnoredField] =
           KindlingsBsonDocumentHandler.derived[WithIgnoredField]
 
         val value = WithIgnoredField(1, visible = true, "test")
         val written = handler.writeTry(value).get
-        // The @ignore field should not appear in BSON
+        // The @Ignore field should not appear in BSON
         assertEquals(written.get("visible"), None)
         assertEquals(written.get("id"), Some(BSONInteger(1)))
         assertEquals(written.get("name"), Some(BSONString("test")))

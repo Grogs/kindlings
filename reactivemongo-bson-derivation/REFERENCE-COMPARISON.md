@@ -26,7 +26,7 @@ This is a friendly difference — users get default values out of the box.
 
 **Reference**: An Option field annotated with `@NoneAsNull` writes `BSONNull` for `None`. Without it, `None` is omitted from the output.
 
-**Ours**: `@noneAsNull` annotation supported. Option fields annotated with `@noneAsNull` write `BSONNull` for `None`; unannotated ones are omitted (same as before).
+**Ours**: `@NoneAsNull` annotation supported. Option fields annotated with `@NoneAsNull` write `BSONNull` for `None`; unannotated ones are omitted (same as before).
 
 **Status**: **Done** (see task 8).
 
@@ -69,7 +69,7 @@ This is a friendly difference — users get default values out of the box.
 
 **Reference**: Has `@DefaultValue("default")` annotation that allows specifying a default for fields that don't have a Scala-level default value. Requires `ReadDefaultValues` opt-in.
 
-**Ours**: `@defaultValue` annotation supported. Per-field default override works without opt-in (since we always apply defaults, see limitation #1). Accepts a value of the field's type.
+**Ours**: `@DefaultValue` annotation supported. Per-field default override works without opt-in (since we always apply defaults, see limitation #1). Accepts a value of the field's type.
 
 **Status**: **Done** (see task 8).
 
@@ -77,7 +77,7 @@ This is a friendly difference — users get default values out of the box.
 
 **Reference**: Has `@Key("custom_name")` to override BSON key for a single field, `@Reader` and `@Writer` to provide custom handlers per field.
 
-**Ours**: We have `@fieldName` (equivalent to `@Key`), `@reader`, and `@writer` annotations. `@reader`/`@writer` accept a `BSONReader[T]`/`BSONWriter[T]` instance that overrides the derived handler for a specific field.
+**Ours**: We have `@FieldName` (equivalent to `@Key`), `@Reader`, and `@Writer` annotations. `@Reader`/`@Writer` accept a `BSONReader[T]`/`BSONWriter[T]` instance that overrides the derived handler for a specific field.
 
 **Status**: **Done** (see task 8).
 
@@ -101,7 +101,7 @@ This is a friendly difference — users get default values out of the box.
 
 **Reference**: `@Flatten` on a field of a case class type flattens the inner case class's fields into the parent document, rather than nesting it as a sub-document.
 
-**Ours**: `@flatten` annotation supported. A flattened field is read/written by deriving a handler for the inner type and applying it directly to the parent document. Nested flattening works recursively.
+**Ours**: `@Flatten` annotation supported. A flattened field is read/written by deriving a handler for the inner type and applying it directly to the parent document. Nested flattening works recursively.
 
 **Status**: **Done** (see task 8). Caveat: conflicting inner field names are not detected at compile time.
 
@@ -122,11 +122,11 @@ This is a friendly difference — users get default values out of the box.
 
 The following reference tests cover edge cases we should also test:
 
-1. **`Optional` field with `BSONNull` and missing** — covered (see `@noneAsNull - explicit BSONNull` test)
+1. **`Optional` field with `BSONNull` and missing** — covered (see `@NoneAsNull - explicit BSONNull` test)
 2. **Recursive structure** (e.g., `Tree`) — **SUPPORTED** (see task 7, `recursive structure (Tree)` test)
 3. **Generic case class** (`GenSeq`) — ported using `GenSeq[Option[SingleBigDecimal]]`
 4. **Empty case class** — already covered
-5. **`@Key` / `@fieldName` annotation** — already covered
+5. **`@Key` / `@FieldName` annotation** — already covered
 6. **Sealed family with case objects** — already covered
 7. **Custom field naming** (SnakeCase, PascalCase) — covered
 8. **Union types (ADT)** — partial coverage (sealed traits only; see limitation #6)

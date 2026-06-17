@@ -47,14 +47,14 @@ trait BsonDocumentHandlerMacrosImpl
     val KeyReader: Type.Ctor1[reactivemongo.api.bson.KeyReader] = Type.Ctor1.of[reactivemongo.api.bson.KeyReader]
     val KeyWriter: Type.Ctor1[reactivemongo.api.bson.KeyWriter] = Type.Ctor1.of[reactivemongo.api.bson.KeyWriter]
     val TryCtor: Type.Ctor1[Try] = Type.Ctor1.of[Try]
-    val fieldNameAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName] =
-      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName]
-    val noneAsNullAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull] =
-      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull]
-    val flattenAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.flatten] =
-      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.flatten]
-    val ignoreAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.ignore] =
-      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.ignore]
+    val fieldNameAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName] =
+      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName]
+    val noneAsNullAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull] =
+      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull]
+    val flattenAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Flatten] =
+      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Flatten]
+    val ignoreAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
+      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore]
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
       Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
@@ -64,7 +64,7 @@ trait BsonDocumentHandlerMacrosImpl
 
   // Field name resolution
 
-  /** Build the BSON key expression for a field, applying the `@fieldName` annotation and the config's `fieldNameMapper`
+  /** Build the BSON key expression for a field, applying the `@FieldName` annotation and the config's `fieldNameMapper`
     * (at compile time if available, runtime otherwise).
     */
   private def resolveFieldKeyExpr[A](
@@ -72,9 +72,9 @@ trait BsonDocumentHandlerMacrosImpl
       param: Parameter,
       ctx: DerivationCtx[A]
   ): Expr[String] = {
-    implicit val fnt: Type[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName] = Types.fieldNameAnn
+    implicit val fnt: Type[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName] = Types.fieldNameAnn
     val annotationOverride: Option[String] =
-      getAnnotationStringArg[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName](param)
+      getAnnotationStringArg[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName](param)
 
     annotationOverride match {
       case Some(name) =>
@@ -510,7 +510,7 @@ trait BsonDocumentHandlerMacrosImpl
 
   /** Try to extract a @reader-annotated BSONReader for a field. Returns None if no annotation. */
   def annotatedReader[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
-    val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.reader[A]]
+    val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Reader[A]]
     getAnnotationValueUntyped(param)(annTpe).map { untyped =>
       // The annotation argument is a BSONReader[A]-typed value, but UntypedExpr loses the type.
       // Wrap it in a quote that upcasts to the expected reader type.
@@ -523,7 +523,7 @@ trait BsonDocumentHandlerMacrosImpl
 
   /** Try to extract a @writer-annotated BSONWriter for a field. Returns None if no annotation. */
   def annotatedWriter[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
-    val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.writer[A]]
+    val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Writer[A]]
     getAnnotationValueUntyped(param)(annTpe).map { untyped =>
       implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
       Expr.quote {
@@ -1150,7 +1150,7 @@ trait BsonDocumentHandlerMacrosImpl
       BsonDocumentHandlerMacrosImpl.this.resolveBsonWriter[F](fieldCtx)
 
     /** Compute the default value expression for a field, from either the Scala-level default (via `param.hasDefault` /
-      * `param.defaultValue`) or the `@defaultValue` annotation.
+      * `param.defaultValue`) or the `@DefaultValue` annotation.
       */
     private def computeDefaultExpr[Field: Type](param: Parameter): Option[Expr[Field]] = {
       val fromParamDefault: Option[Expr[Field]] =
@@ -1165,10 +1165,10 @@ trait BsonDocumentHandlerMacrosImpl
         else None
 
       def fromAnnotation: Option[Expr[Field]] = {
-        val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue[Field]]
+        val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue[Field]]
         getAnnotationValueUntyped(param)(annTpe).map { untyped =>
           // Widen the annotation argument to the field type at runtime.
-          // This handles cases like `@defaultValue(Some(45.6f))` for an `Option[Float]` field,
+          // This handles cases like `@DefaultValue(Some(45.6f))` for an `Option[Float]` field,
           // where the argument expression has a more specific type (`Some[Float]`).
           Expr.quote {
             Expr.splice(untyped.asTyped).asInstanceOf[Field]
@@ -1185,8 +1185,8 @@ trait BsonDocumentHandlerMacrosImpl
         param: Parameter,
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[Any]]] = {
-      implicit val ignoreAnnT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.ignore] = Types.ignoreAnn
-      if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.ignore](param)) {
+      implicit val ignoreAnnT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] = Types.ignoreAnn
+      if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](param)) {
         // @ignore: field is not serialized. Use default value if available, else null.
         computeDefaultExpr[Field](param) match {
           case Some(defaultExpr) =>
@@ -1368,8 +1368,8 @@ trait BsonDocumentHandlerMacrosImpl
       }
 
     private def isFlattened(param: Parameter): Boolean = {
-      implicit val fat: Type[hearth.kindlings.reactivemongobsonderivation.annotations.flatten] = Types.flattenAnn
-      hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.flatten](param)
+      implicit val fat: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Flatten] = Types.flattenAnn
+      hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Flatten](param)
     }
 
     private def buildFieldWriteExpr[Field: Type](
@@ -1378,8 +1378,8 @@ trait BsonDocumentHandlerMacrosImpl
         fieldValue: Expr[Field],
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]]] = {
-      implicit val ignoreAnnT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.ignore] = Types.ignoreAnn
-      if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.ignore](param)) {
+      implicit val ignoreAnnT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] = Types.ignoreAnn
+      if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](param)) {
         // @ignore: field is not serialized. Produce no BSON elements.
         MIO.pure(Expr.quote(scala.util.Success(Nil): scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]))
       } else {
@@ -1428,10 +1428,10 @@ trait BsonDocumentHandlerMacrosImpl
         case IsOption(isOption) =>
           import isOption.Underlying as Inner
           val innerCtx = fieldCtx.copy(tpe = Type[Inner])
-          implicit val nat: Type[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull] =
+          implicit val nat: Type[hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull] =
             Types.noneAsNullAnn
           val writeAsNull =
-            hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull](param)
+            hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull](param)
           resolveFieldWriter[Inner](innerCtx).map { innerWriterExpr =>
             if (writeAsNull)
               Expr.quote {

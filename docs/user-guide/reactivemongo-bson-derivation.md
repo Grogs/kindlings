@@ -44,8 +44,8 @@ The `derived` macro picks up the implicit `BsonDocumentHandlerConfig` from scope
 | `AnyVal` value types | Treated as their underlying type |
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array` |
 | Maps | `Map[K, V]` (any key type with `KeyReader[K]`/`KeyWriter[K]`) |
-| Default field values | Applied when field is missing on read; `@defaultValue` for per-field override |
-| `@fieldName` / `@noneAsNull` / `@reader` / `@writer` / `@flatten` | Per-field annotations supported |
+| Default field values | Applied when field is missing on read; `@DefaultValue` for per-field override |
+| `@FieldName` / `@NoneAsNull` / `@Reader` / `@Writer` / `@Flatten` | Per-field annotations supported |
 | Field naming | `String => String` or structured `FieldNaming` |
 
 ## Configuration
@@ -130,29 +130,29 @@ If `true` (default), unknown BSON fields are silently ignored on read. If `false
 
 ## Annotations
 
-### `@fieldName`
+### `@FieldName`
 
 Override the BSON key for a specific field. Takes precedence over `fieldNameMapper`.
 
 ```scala
-import hearth.kindlings.reactivemongobsonderivation.annotations.fieldName
+import hearth.kindlings.reactivemongobsonderivation.annotations.FieldName
 
 case class User(
-  @fieldName("user_id") id: String,
-  @fieldName("created_at") createdAt: Long
+  @FieldName("user_id") id: String,
+  @FieldName("created_at") createdAt: Long
 )
 ```
 
-### `@noneAsNull`
+### `@NoneAsNull`
 
-By default, `None` values are omitted from the written document. Annotate an `Option` field with `@noneAsNull` to write `None` as `BSONNull` instead.
+By default, `None` values are omitted from the written document. Annotate an `Option` field with `@NoneAsNull` to write `None` as `BSONNull` instead.
 
 ```scala
-import hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull
+import hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull
 
 case class Record(
   name: String,
-  @noneAsNull description: Option[String]
+  @NoneAsNull description: Option[String]
 )
 
 val handler = KindlingsBsonDocumentHandler.derived[Record]
@@ -162,16 +162,16 @@ handler.writeTry(Record("x", None)).get
 
 On read, `BSONNull` is always decoded as `None`, whether or not the annotation is present.
 
-### `@defaultValue`
+### `@DefaultValue`
 
 Provide a default value for a field that doesn't have a Scala-level default. Applied when the field is missing on read.
 
 ```scala
-import hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue
+import hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue
 
 case class Config(
   name: String,
-  @defaultValue(8080) port: Int
+  @DefaultValue(8080) port: Int
 )
 
 val handler = KindlingsBsonDocumentHandler.derived[Config]
@@ -179,7 +179,7 @@ handler.readDocument(BSONDocument("name" -> "app")).get
 // Config("app", 8080)
 ```
 
-### `@reader` and `@writer`
+### `@Reader` and `@Writer`
 
 Override the BSON reader or writer for a specific field. Useful when a field needs a custom codec without defining an implicit for the whole type.
 
@@ -193,20 +193,20 @@ object codecs {
 }
 
 case class Styled(
-  @reader(codecs.upperReader) label: String,
-  @writer(codecs.lowerWriter) value: String
+  @Reader(codecs.upperReader) label: String,
+  @Writer(codecs.lowerWriter) value: String
 )
 ```
 
-### `@flatten`
+### `@Flatten`
 
 Flatten a nested case class so its fields are read/written directly in the parent document.
 
 ```scala
-import hearth.kindlings.reactivemongobsonderivation.annotations.flatten
+import hearth.kindlings.reactivemongobsonderivation.annotations.Flatten
 
 case class Range(start: Int, end: Int)
-case class LabelledRange(name: String, @flatten range: Range)
+case class LabelledRange(name: String, @Flatten range: Range)
 
 val handler = KindlingsBsonDocumentHandler.derived[LabelledRange]
 
@@ -263,5 +263,5 @@ handler.readDocument(BSONDocument()).get
 - Scala 3 only (Scala 2.13 cross-compilation is a future task)
 - JVM only (Scala.js / Scala Native are not applicable — `reactivemongo-bson-api` is JVM-only)
 - Non-sealed (open) traits are not supported; only sealed trait / Scala 3 enum hierarchies work
-- `@flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
+- `@Flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
 - No `UnionType` for non-sealed ADTs
