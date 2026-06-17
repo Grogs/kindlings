@@ -472,6 +472,23 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.readDocument(written).get, leaf)
       }
 
+      test("SimpleName discriminator with nested sealed trait") {
+        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.SimpleName)
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[TreeModule.Node] =
+          KindlingsBsonDocumentHandler.derived[TreeModule.Node]
+
+        val leaf = TreeModule.Leaf("data")
+        val written = handler.writeTry(leaf).get
+
+        // Simple name should NOT include the enclosing object
+        val discriminator = written.get("className").map(_.asInstanceOf[BSONString].value)
+        assertEquals(discriminator, Some("Leaf"))
+
+        assertEquals(handler.readDocument(written).get, leaf)
+      }
+
       test("Custom type naming transforms simple name") {
         given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.Custom(_.toLowerCase))
 
