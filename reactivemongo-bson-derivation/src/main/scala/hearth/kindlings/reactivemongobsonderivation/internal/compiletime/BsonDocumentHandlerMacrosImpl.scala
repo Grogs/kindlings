@@ -248,35 +248,67 @@ trait BsonDocumentHandlerMacrosImpl
   def isCaseClassOrEnum[A: Type]: Boolean =
     CaseClass.parse[A].toEither.isRight || Enum.parse[A].toEither.isRight
 
-  def resolveBsonReader[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] =
-    if (isCaseClassOrEnum[A])
-      deriveResultRecursively[A](using fieldCtx)
-        .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONReader[A]]])
-    else {
-      implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
-      Type[reactivemongo.api.bson.BSONReader[A]].summonExprIgnoring().toEither match {
-        case Right(reader) => MIO.pure(reader)
-        case Left(_)       =>
-          val err =
-            BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, "No BSONReader found")
-          Log.error(err.message) >> MIO.fail(err)
-      }
+  def resolveBsonReader[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
+    Type[reactivemongo.api.bson.BSONReader[A]].summonExprIgnoring().toEither match {
+      case Right(reader) => MIO.pure(reader)
+      case Left(_)       =>
+        Type[A] match {
+          case IsOption(isOption) =>
+            import isOption.Underlying as Inner
+            resolveBsonReader[Inner](fieldCtx.nest[Inner]).map { innerReaderExpr =>
+              Expr.quote {
+                new reactivemongo.api.bson.BSONReader[A] {
+                  def readTry(bson: reactivemongo.api.bson.BSONValue): scala.util.Try[A] =
+                    bson match {
+                      case reactivemongo.api.bson.BSONNull =>
+                        scala.util.Success(None.asInstanceOf[A])
+                      case other =>
+                        Expr.splice(innerReaderExpr).readTry(other).map(Some(_).asInstanceOf[A])
+                    }
+                }
+              }
+            }
+          case _ if isCaseClassOrEnum[A] =>
+            deriveResultRecursively[A](using fieldCtx)
+              .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONReader[A]]])
+          case _ =>
+            val err =
+              BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, "No BSONReader found")
+            Log.error(err.message) >> MIO.fail(err)
+        }
     }
+  }
 
-  def resolveBsonWriter[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] =
-    if (isCaseClassOrEnum[A])
-      deriveResultRecursively[A](using fieldCtx)
-        .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONWriter[A]]])
-    else {
-      implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
-      Type[reactivemongo.api.bson.BSONWriter[A]].summonExprIgnoring().toEither match {
-        case Right(writer) => MIO.pure(writer)
-        case Left(_)       =>
-          val err =
-            BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, "No BSONWriter found")
-          Log.error(err.message) >> MIO.fail(err)
-      }
+  def resolveBsonWriter[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+    Type[reactivemongo.api.bson.BSONWriter[A]].summonExprIgnoring().toEither match {
+      case Right(writer) => MIO.pure(writer)
+      case Left(_)       =>
+        Type[A] match {
+          case IsOption(isOption) =>
+            import isOption.Underlying as Inner
+            resolveBsonWriter[Inner](fieldCtx.nest[Inner]).map { innerWriterExpr =>
+              Expr.quote {
+                new reactivemongo.api.bson.BSONWriter[A] {
+                  def writeTry(opt: A): scala.util.Try[reactivemongo.api.bson.BSONValue] =
+                    opt.asInstanceOf[Option[Inner]] match {
+                      case Some(v) => Expr.splice(innerWriterExpr).writeTry(v)
+                      case None    => scala.util.Success(reactivemongo.api.bson.BSONNull)
+                    }
+                }
+              }
+            }
+          case _ if isCaseClassOrEnum[A] =>
+            deriveResultRecursively[A](using fieldCtx)
+              .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONWriter[A]]])
+          case _ =>
+            val err =
+              BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, "No BSONWriter found")
+            Log.error(err.message) >> MIO.fail(err)
+        }
     }
+  }
 
   /** Try to extract a @reader-annotated BSONReader for a field. Returns None if no annotation. */
   def annotatedReader[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
@@ -865,7 +897,12 @@ trait BsonDocumentHandlerMacrosImpl
       def fromAnnotation: Option[Expr[Field]] = {
         val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.defaultValue[Field]]
         getAnnotationValueUntyped(param)(annTpe).map { untyped =>
-          untyped.asTyped.asInstanceOf[Expr[Field]]
+          // Widen the annotation argument to the field type at runtime.
+          // This handles cases like `@defaultValue(Some(45.6f))` for an `Option[Float]` field,
+          // where the argument expression has a more specific type (`Some[Float]`).
+          Expr.quote {
+            Expr.splice(untyped.asTyped).asInstanceOf[Field]
+          }
         }
       }
 
@@ -964,6 +1001,61 @@ trait BsonDocumentHandlerMacrosImpl
                   }
                   .asInstanceOf[Expr[scala.util.Try[Any]]]
               case None => readCode.asInstanceOf[Expr[scala.util.Try[Any]]]
+            }
+          }
+        case IsValueType(isValueType) if !Type[Field].isNamedTuple =>
+          import isValueType.Underlying as Inner
+          val innerCtx = fieldCtx.copy(tpe = Type[Inner])
+          val wrapLambdaMIO = isValueType.value.wrap match {
+            case _: CtorLikeOf.PlainValue[?, ?] =>
+              LambdaBuilder
+                .of1[Inner]("inner")
+                .traverse(innerExpr => MIO.pure(isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Field]]))
+                .map(_.build[Field])
+            case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
+              LambdaBuilder
+                .of1[Inner]("inner")
+                .traverse { innerExpr =>
+                  val wrapResult = isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Either[String, Field]]]
+                  MIO.pure(Expr.quote {
+                    Expr.splice(wrapResult) match {
+                      case scala.Right(v)  => v
+                      case scala.Left(msg) => throw new IllegalArgumentException(msg)
+                    }
+                  })
+                }
+                .map(_.build[Field])
+            case _ =>
+              LambdaBuilder
+                .of1[Inner]("inner")
+                .traverse(innerExpr => MIO.pure(isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Field]]))
+                .map(_.build[Field])
+          }
+          wrapLambdaMIO.flatMap { wrapLambda =>
+            resolveFieldReader[Inner](innerCtx).map { readerExpr =>
+              val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
+              val readCode = Expr.quote {
+                Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
+                  case Some(v) if !v.isInstanceOf[reactivemongo.api.bson.BSONNull] =>
+                    Expr
+                      .splice(readerExpr)
+                      .readTry(v)
+                      .map(Expr.splice(wrapLambda).apply(_))
+                      .asInstanceOf[scala.util.Try[Any]]
+                  case _ =>
+                    scala.util.Failure(new NoSuchElementException("Field not found")).asInstanceOf[scala.util.Try[Any]]
+                }
+              }
+              defaultExprOpt match {
+                case Some(defaultExpr) =>
+                  Expr.quote {
+                    Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
+                      case None => scala.util.Success(Expr.splice(defaultExpr)).asInstanceOf[scala.util.Try[Any]]
+                      case _    => Expr.splice(readCode)
+                    }
+                  }
+                case None => readCode
+              }
             }
           }
         case _ =>
@@ -1084,6 +1176,22 @@ trait BsonDocumentHandlerMacrosImpl
                 }
               }
           }
+        case IsValueType(isValueType) if !Type[Field].isNamedTuple =>
+          import isValueType.Underlying as Inner
+          val innerCtx = fieldCtx.copy(tpe = Type[Inner])
+          LambdaBuilder
+            .of1[Field]("value")
+            .traverse(valueExpr => MIO.pure(isValueType.value.unwrap(valueExpr)))
+            .map(_.build[Inner])
+            .flatMap { unwrapLambda =>
+              resolveFieldWriter[Inner](innerCtx).map { writerExpr =>
+                Expr.quote {
+                  Expr.splice(writerExpr).writeTry(Expr.splice(unwrapLambda).apply(Expr.splice(fieldValue))).map { bsv =>
+                    List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
+                  }
+                }
+              }
+            }
         case _ =>
           resolveFieldWriter[Field](fieldCtx).map { writerExpr =>
             Expr.quote {
