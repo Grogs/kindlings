@@ -458,8 +458,6 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       import hearth.kindlings.reactivemongobsonderivation.TypeNaming
 
       test("FullName discriminator includes enclosing objects") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.FullName)
-
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[TreeModule.Node] =
           KindlingsBsonDocumentHandler.derived[TreeModule.Node]
@@ -489,8 +487,6 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
 
       test("FullName normalizes case object symbols") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.FullName)
-
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[Status] = KindlingsBsonDocumentHandler.derived[Status]
 
