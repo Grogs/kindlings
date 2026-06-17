@@ -855,6 +855,23 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(value).get
         assertEquals(handler.readDocument(written).get, value)
       }
+      test("@ignore field is not serialized") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithIgnoredField] =
+          KindlingsBsonDocumentHandler.derived[WithIgnoredField]
+
+        val value = WithIgnoredField(1, visible = true, "test")
+        val written = handler.writeTry(value).get
+        // The @ignore field should not appear in BSON
+        assertEquals(written.get("visible"), None)
+        assertEquals(written.get("id"), Some(BSONInteger(1)))
+        assertEquals(written.get("name"), Some(BSONString("test")))
+
+        // Reading back should use the default value for the ignored field
+        val readBack = handler.readDocument(BSONDocument("id" -> 1, "name" -> "test")).get
+        assertEquals(readBack, WithIgnoredField(1, visible = true, "test"))
+      }
+
     }
 
   }
