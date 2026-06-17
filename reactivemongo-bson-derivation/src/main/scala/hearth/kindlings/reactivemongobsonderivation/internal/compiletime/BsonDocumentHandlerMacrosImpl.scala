@@ -53,6 +53,8 @@ trait BsonDocumentHandlerMacrosImpl
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.noneAsNull]
     val flattenAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.flatten] =
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.flatten]
+    val ignoreAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.ignore] =
+      Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.ignore]
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
       Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
@@ -1182,8 +1184,17 @@ trait BsonDocumentHandlerMacrosImpl
         fName: String,
         param: Parameter,
         fieldCtx: DerivationCtx[Field]
-    ): MIO[Expr[scala.util.Try[Any]]] =
-      if (isFlattened(param)) {
+    ): MIO[Expr[scala.util.Try[Any]]] = {
+      implicit val ignoreAnnT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.ignore] = Types.ignoreAnn
+      if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.ignore](param)) {
+        // @ignore: field is not serialized. Use default value if available, else null.
+        computeDefaultExpr[Field](param) match {
+          case Some(defaultExpr) =>
+            MIO.pure(Expr.quote(scala.util.Success(Expr.splice(defaultExpr)).asInstanceOf[scala.util.Try[Any]]))
+          case None =>
+            MIO.pure(Expr.quote(scala.util.Success(null.asInstanceOf[Field]).asInstanceOf[scala.util.Try[Any]]))
+        }
+      } else if (isFlattened(param)) {
         buildFlattenedFieldReadExpr[Field](docExpr, fieldCtx)
       } else {
         val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
@@ -1197,6 +1208,7 @@ trait BsonDocumentHandlerMacrosImpl
             buildFieldReadExprWithoutAnnotation[Field](docExpr, fNameExpr, param, fieldCtx)
         }
       }
+    }
 
     private def buildFlattenedFieldReadExpr[Field: Type](
         docExpr: Expr[BSONDocument],
@@ -1366,23 +1378,29 @@ trait BsonDocumentHandlerMacrosImpl
         fieldValue: Expr[Field],
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]]] = {
-      val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
-
-      if (isFlattened(param)) {
-        buildFlattenedFieldWriteExpr[Field](fieldValue, fieldCtx)
+      implicit val ignoreAnnT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.ignore] = Types.ignoreAnn
+      if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.ignore](param)) {
+        // @ignore: field is not serialized. Produce no BSON elements.
+        MIO.pure(Expr.quote(scala.util.Success(Nil): scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]))
       } else {
-        // @writer annotation: use the provided writer directly
-        annotatedWriter[Field](param) match {
-          case Some(writerExpr) =>
-            MIO.pure(
-              Expr.quote {
-                Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).map { bsv =>
-                  List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
+        val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
+
+        if (isFlattened(param)) {
+          buildFlattenedFieldWriteExpr[Field](fieldValue, fieldCtx)
+        } else {
+          // @writer annotation: use the provided writer directly
+          annotatedWriter[Field](param) match {
+            case Some(writerExpr) =>
+              MIO.pure(
+                Expr.quote {
+                  Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).map { bsv =>
+                    List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
+                  }
                 }
-              }
-            )
-          case None =>
-            buildFieldWriteExprWithoutAnnotation[Field](fNameExpr, param, fieldValue, fieldCtx)
+              )
+            case None =>
+              buildFieldWriteExprWithoutAnnotation[Field](fNameExpr, param, fieldValue, fieldCtx)
+          }
         }
       }
     }

@@ -160,3 +160,9 @@ final case class Person2(name: String, age: Int, phoneNum: Long, itemList: Seq[I
 
 final case class WithValueClass(value: Int) extends AnyVal
 final case class WithValueTypeField(name: String, id: WithValueClass)
+
+final case class WithIgnoredField(
+    id: Int,
+    @hearth.kindlings.reactivemongobsonderivation.annotations.ignore visible: Boolean = true,
+    name: String
+)

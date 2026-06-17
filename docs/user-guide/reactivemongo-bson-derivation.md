@@ -262,6 +262,6 @@ handler.readDocument(BSONDocument()).get
 
 - Scala 3 only (Scala 2.13 cross-compilation is a future task)
 - JVM only (Scala.js / Scala Native are not applicable — `reactivemongo-bson-api` is JVM-only)
-- Sealed trait hierarchies must be reachable from the derived type (no orphan sub-hierarchies)
+- Non-sealed (open) traits are not supported; only sealed trait / Scala 3 enum hierarchies work
 - `@flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
 - No `UnionType` for non-sealed ADTs

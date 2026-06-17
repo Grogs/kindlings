@@ -92,7 +92,7 @@ The output type `KindlingsBsonDocumentHandler[T]` is a subtype of the standard
 | Flatten inner fields | `@Flatten` | `@flatten` | Same behavior |
 | None as BSONNull | `@NoneAsNull` | `@noneAsNull` | Same behavior |
 | Default value override | `@DefaultValue("val")` | `@defaultValue(val)` | Kindlings: argument is the field type, not string |
-| Ignore field | `@Ignore` | **Not supported** | Use `Option` with default |
+| Ignore field | `@Ignore` | `@ignore` | Supported |
 | Skip field | `transient` | **Not supported** | Manual reader/writer needed |
 
 ### Custom reader/writer differences
@@ -194,17 +194,15 @@ and `writeTry`. For read-only or write-only use, just call the relevant method.
 Migration: Refactor hierarchies to use sealed traits, or provide manual
 `BSONDocumentHandler` instances for non-sealed types.
 
-### 7. No `@Ignore` annotation
+### 7. `@Ignore` annotation
 
 **Reference**: `@Ignore` on a field means it is never serialized to BSON
 (completely absent from the document). If the field must be readable,
 a default must be provided.
-**Kindlings**: Not supported.
-
-Migration: Use `Option` with `None` default. The field will be written as
-missing/null and read back as `None`, which is semantically similar for
-most use cases. For fields that should never appear in BSON, provide a
-custom reader/writer via `@reader`/`@writer` that skips the field.
+**Kindlings**: Supported via `@ignore` annotation. Field is skipped during
+both reading and writing. If a default value is defined (Scala-level or
+via `@defaultValue`), it is used when reading; otherwise the field gets a
+`null` value (which may cause issues for non-`Option` types).
 
 ### 8. Non-`String` map keys
 
