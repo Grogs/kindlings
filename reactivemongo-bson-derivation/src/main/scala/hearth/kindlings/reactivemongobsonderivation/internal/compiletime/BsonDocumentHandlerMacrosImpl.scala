@@ -44,6 +44,8 @@ trait BsonDocumentHandlerMacrosImpl
     val TryBsonDocument: Type[Try[BSONDocument]] = Type.of[Try[BSONDocument]]
     val BsonReader: Type.Ctor1[reactivemongo.api.bson.BSONReader] = Type.Ctor1.of[reactivemongo.api.bson.BSONReader]
     val BsonWriter: Type.Ctor1[reactivemongo.api.bson.BSONWriter] = Type.Ctor1.of[reactivemongo.api.bson.BSONWriter]
+    val KeyReader: Type.Ctor1[reactivemongo.api.bson.KeyReader] = Type.Ctor1.of[reactivemongo.api.bson.KeyReader]
+    val KeyWriter: Type.Ctor1[reactivemongo.api.bson.KeyWriter] = Type.Ctor1.of[reactivemongo.api.bson.KeyWriter]
     val TryCtor: Type.Ctor1[Try] = Type.Ctor1.of[Try]
     val fieldNameAnn: Type[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName] =
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.fieldName]
@@ -890,6 +892,19 @@ trait BsonDocumentHandlerMacrosImpl
       val factoryExpr = isMap.factory
       val buildStep = isMap.build
 
+      // Summon KeyReader[Key] / KeyWriter[Key] for non-String map keys.
+      // For String keys these will resolve to the built-in KeyReader[String] / KeyWriter[String].
+      implicit val KeyReaderT: Type[reactivemongo.api.bson.KeyReader[Key]] = Types.KeyReader[Key]
+      implicit val KeyWriterT: Type[reactivemongo.api.bson.KeyWriter[Key]] = Types.KeyWriter[Key]
+      val keyReaderOpt: Option[Expr[reactivemongo.api.bson.KeyReader[Key]]] =
+        Type[reactivemongo.api.bson.KeyReader[Key]]
+          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+          .toOption
+      val keyWriterOpt: Option[Expr[reactivemongo.api.bson.KeyWriter[Key]]] =
+        Type[reactivemongo.api.bson.KeyWriter[Key]]
+          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+          .toOption
+
       // Resolve value reader/writer using dual-path approach
       val valueCtx = ctx.nest[Value]
       for {
@@ -898,26 +913,53 @@ trait BsonDocumentHandlerMacrosImpl
         readLambda <- LambdaBuilder
           .of1[BSONDocument]("doc")
           .traverse { docExpr =>
-            val readLoop: Expr[scala.collection.mutable.Builder[Pair, CtorResult]] = Expr.quote {
-              val valueReader = Expr.splice(valueReaderExpr)
-              val mapBuilder = Expr.splice(factoryExpr).newBuilder
-              var err: Throwable = null
-              val iter = Expr.splice(docExpr).elements.iterator
-              while (err == null && iter.hasNext) {
-                val el = iter.next()
-                valueReader.readTry(el.value) match {
-                  case scala.util.Success(v) =>
-                    mapBuilder += Expr.splice(
-                      isMap.pair(
-                        Expr.quote(el.name.asInstanceOf[Key]),
-                        Expr.quote(v)
-                      )
-                    )
-                  case scala.util.Failure(e) => err = e
+            val readLoop: Expr[scala.collection.mutable.Builder[Pair, CtorResult]] = keyReaderOpt match {
+              case Some(keyReaderExpr) =>
+                Expr.quote {
+                  val valueReader = Expr.splice(valueReaderExpr)
+                  val keyReader = Expr.splice(keyReaderExpr)
+                  val mapBuilder = Expr.splice(factoryExpr).newBuilder
+                  var err: Throwable = null
+                  val iter = Expr.splice(docExpr).elements.iterator
+                  while (err == null && iter.hasNext) {
+                    val el = iter.next()
+                    keyReader.readTry(el.name) match {
+                      case scala.util.Success(k) =>
+                        valueReader.readTry(el.value) match {
+                          case scala.util.Success(v) =>
+                            mapBuilder += Expr.splice(
+                              isMap.pair(Expr.quote(k), Expr.quote(v))
+                            )
+                          case scala.util.Failure(e) => err = e
+                        }
+                      case scala.util.Failure(e) => err = e
+                    }
+                  }
+                  if (err != null) throw err
+                  mapBuilder
                 }
-              }
-              if (err != null) throw err
-              mapBuilder
+              case None =>
+                Expr.quote {
+                  val valueReader = Expr.splice(valueReaderExpr)
+                  val mapBuilder = Expr.splice(factoryExpr).newBuilder
+                  var err: Throwable = null
+                  val iter = Expr.splice(docExpr).elements.iterator
+                  while (err == null && iter.hasNext) {
+                    val el = iter.next()
+                    valueReader.readTry(el.value) match {
+                      case scala.util.Success(v) =>
+                        mapBuilder += Expr.splice(
+                          isMap.pair(
+                            Expr.quote(el.name.asInstanceOf[Key]),
+                            Expr.quote(v)
+                          )
+                        )
+                      case scala.util.Failure(e) => err = e
+                    }
+                  }
+                  if (err != null) throw err
+                  mapBuilder
+                }
             }
             val buildResultExpr = buildStep.ctor(readLoop)
             collectBuildResult[A](buildStep, buildResultExpr.asInstanceOf[Expr[Any]])
@@ -926,26 +968,58 @@ trait BsonDocumentHandlerMacrosImpl
         writeLambda <- LambdaBuilder
           .of1[A]("value")
           .traverse { valueExpr =>
-            MIO.pure(Expr.quote {
-              val valueWriter = Expr.splice(valueWriterExpr)
-              val iterable =
-                Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
-              val elements = scala.collection.mutable.ListBuffer
-                .empty[reactivemongo.api.bson.BSONElement]
-              var err: Throwable = null
-              val iter = iterable.iterator
-              while (err == null && iter.hasNext) {
-                val pair = iter.next()
-                valueWriter.writeTry(pair._2) match {
-                  case scala.util.Success(bson) =>
-                    elements += reactivemongo.api.bson
-                      .BSONElement(pair._1.asInstanceOf[String], bson.asInstanceOf[reactivemongo.api.bson.BSONValue])
-                  case scala.util.Failure(e) => err = e
-                }
-              }
-              if (err != null) scala.util.Failure(err)
-              else scala.util.Success(BSONDocument(elements.result()*))
-            })
+            keyWriterOpt match {
+              case Some(keyWriterExpr) =>
+                MIO.pure(Expr.quote {
+                  val valueWriter = Expr.splice(valueWriterExpr)
+                  val keyWriter = Expr.splice(keyWriterExpr)
+                  val iterable =
+                    Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
+                  val elements = scala.collection.mutable.ListBuffer
+                    .empty[reactivemongo.api.bson.BSONElement]
+                  var err: Throwable = null
+                  val iter = iterable.iterator
+                  while (err == null && iter.hasNext) {
+                    val pair = iter.next()
+                    keyWriter.writeTry(pair._1) match {
+                      case scala.util.Success(keyStr) =>
+                        valueWriter.writeTry(pair._2) match {
+                          case scala.util.Success(bson) =>
+                            elements +=
+                              reactivemongo.api.bson.BSONElement(keyStr, bson)
+                          case scala.util.Failure(e) => err = e
+                        }
+                      case scala.util.Failure(e) => err = e
+                    }
+                  }
+                  if (err != null) scala.util.Failure(err)
+                  else scala.util.Success(BSONDocument(elements.result()*))
+                })
+              case None =>
+                MIO.pure(Expr.quote {
+                  val valueWriter = Expr.splice(valueWriterExpr)
+                  val iterable =
+                    Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
+                  val elements = scala.collection.mutable.ListBuffer
+                    .empty[reactivemongo.api.bson.BSONElement]
+                  var err: Throwable = null
+                  val iter = iterable.iterator
+                  while (err == null && iter.hasNext) {
+                    val pair = iter.next()
+                    valueWriter.writeTry(pair._2) match {
+                      case scala.util.Success(bson) =>
+                        elements += reactivemongo.api.bson
+                          .BSONElement(
+                            pair._1.asInstanceOf[String],
+                            bson.asInstanceOf[reactivemongo.api.bson.BSONValue]
+                          )
+                      case scala.util.Failure(e) => err = e
+                    }
+                  }
+                  if (err != null) scala.util.Failure(err)
+                  else scala.util.Success(BSONDocument(elements.result()*))
+                })
+            }
           }
           .map(_.build[scala.util.Try[BSONDocument]])
       } yield Rule.matched(Expr.quote {

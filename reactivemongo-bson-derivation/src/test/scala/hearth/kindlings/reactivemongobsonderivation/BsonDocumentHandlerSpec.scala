@@ -833,6 +833,28 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(value).get
         assertEquals(handler.readDocument(written).get, value)
       }
+
+      test("Map with java.util.Locale keys") {
+        import java.util.Locale
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithLocaleMap] =
+          KindlingsBsonDocumentHandler.derived[WithLocaleMap]
+
+        val value = WithLocaleMap("name", Map(Locale.FRANCE -> "French", Locale.GERMANY -> "German"))
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
+
+      test("Map with java.util.UUID keys") {
+        import java.util.UUID
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithUUIDMap] =
+          KindlingsBsonDocumentHandler.derived[WithUUIDMap]
+
+        val value = WithUUIDMap(Map(UUID.fromString("550e8400-e29b-41d4-a716-446655440000") -> 1))
+        val written = handler.writeTry(value).get
+        assertEquals(handler.readDocument(written).get, value)
+      }
     }
 
   }
