@@ -17,7 +17,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | `"support single member options"` | `support single member options` | |
 | `"support generic optional value"` | `support generic optional value` | Handler only |
 | `"support generic case class Foo"` | `support generic case class Foo` | |
-| `"support generic case class GenSeq"` | `support generic case class GenSeq` | Adapted to `GenSeq[String]` |
+| `"support generic case class GenSeq"` | `support generic case class GenSeq` | Now uses `GenSeq[Option[SingleBigDecimal]]` |
 | `"support seq"` | `Seq[String]` | |
 | `"support single member case classes"` | `single member case class` | |
 | `"handle overloaded apply correctly"` | `handle overloaded apply` | |
@@ -99,16 +99,6 @@ our sealed-trait tests; only the discriminator string differs.
   **Not ported.** Our current implementation does not support combining `@flatten`
   with `@reader`/`@writer` on the same field. `@flatten` takes precedence.
 
-### Collection fields with `Option[CaseClass]` elements (`"support generic case class GenSeq"`)
-
-**Adapted.** The reference test uses `GenSeq[Option[SingleBigDecimal]]`, where the
-`items` field is `Seq[Option[SingleBigDecimal]]`. Our case-class rule handles
-collection-typed fields by summoning a `BSONReader`/`BSONWriter` for the whole
-field type. It does not yet derive inline `BSONReader`/`BSONWriter` instances
-for collection types, so `Seq[Option[SingleBigDecimal]]` cannot be resolved.
-We test `GenSeq[String]` instead. This would require adding collection (and map)
-reader/writer derivation to `resolveBsonReader`/`resolveBsonWriter`.
-
 ### Strict BSONNull handling for Option (`"not support type mismatch for optional value"`, `"support null for optional value"` with strict semantics)
 
 **Not ported.** We always decode `BSONNull` as `None` and are more permissive
@@ -131,4 +121,5 @@ is found and applied correctly.
 - **Ported / adapted**: ~22 top-level behaviors.
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   `@Ignore`, separate Reader/Writer derivation, strict `BSONNull` semantics) plus
-  collection fields with `Option[CaseClass]` elements and non-`String` map keys.
+  non-`String` map keys.
+- **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
