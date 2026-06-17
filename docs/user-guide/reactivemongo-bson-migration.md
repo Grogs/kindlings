@@ -160,7 +160,7 @@ handle missing fields the way you want.
 Migration: Remove `AutomaticMaterialization` flag — sealed trait handlers
 are always derived.
 
-### 3. Discriminator defaults to `SimpleName`
+### 3. Discriminator defaults to `FullName`
 
 **Reference**: Default discriminator value is `FullName`
 (e.g., `"com.example.Tree.Leaf"`).
@@ -269,7 +269,7 @@ Run your existing BSON round-trip tests. Key areas to verify:
 
 - Default values are now always applied (may affect reader behavior)
 - `BSONNull` for `Option` fields now decodes (instead of failing)
-- Discriminator strings may differ (`SimpleName` vs `FullName`)
+- Discriminator strings match by default (`FullName`; use `TypeNaming.SimpleName` for short names)
 - Recursive types and generic case classes should work without special setup
 
 ## FAQ
@@ -287,8 +287,9 @@ extends `BSONReader[T]` and `BSONWriter[T]`. The derived handler is both.
 
 **Q: My sealed trait discriminator values changed after migration. Why?**
 
-Because Kindlings defaults to `TypeNaming.SimpleName`. Either set
-`config.withTypeNaming(TypeNaming.FullName)` or update your stored data.
+They should not have changed — Kindlings defaults to `TypeNaming.FullName`,
+matching the reference. If you were using short (simple) discriminator
+names before, set `config.withTypeNaming(TypeNaming.SimpleName)`.
 
 **Q: I have custom `BSONReader`/`BSONWriter` implicits for certain types (like `BSONObjectID`).**
 
