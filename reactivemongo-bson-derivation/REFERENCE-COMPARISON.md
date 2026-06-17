@@ -113,7 +113,7 @@ This is a friendly difference — users get default values out of the box.
 - **Sealed trait discrimination with discriminator field** (both)
 - **Collection read/write** (both)
 - **Value type (`AnyVal`) read/write** (both)
-- **Map support** (both)
+- **Map support** (includes non-`String` keys via `KeyReader`/`KeyWriter`) (both)
 - **Empty case classes** (both)
 - **Self-references / recursive types** (both)
 - **Generic case classes** (both)

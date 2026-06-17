@@ -106,7 +106,8 @@ than the reference (see `REFERENCE-COMPARISON.md` #3).
 
 ### Maps with non-String keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`)
 
-**Not ported.** Our `Map` support is restricted to `Map[String, V]`.
+**Ported.** Our map handler now summons `KeyReader[K]`/`KeyWriter[K]` for
+non-String key types. Tested with `java.util.Locale` and `java.util.UUID` keys.
 
 ### `@defaultValue` with `Option` literal (`WithDefaultValues2.score: Option[Float]`)
 
@@ -120,6 +121,5 @@ is found and applied correctly.
   individual assertions (including nested `in` blocks).
 - **Ported / adapted**: ~22 top-level behaviors.
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
-  `@Ignore`, separate Reader/Writer derivation, strict `BSONNull` semantics) plus
-  non-`String` map keys.
+  `@Ignore`, separate Reader/Writer derivation, strict `BSONNull` semantics).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
