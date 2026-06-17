@@ -123,7 +123,7 @@ Created `docs/user-guide/reactivemongo-bson-derivation.md` with:
 - Quick start
 - Supported types table
 - Configuration (all three config fields with examples)
-- `@fieldName` annotation
+- `@FieldName` annotation
 - Examples (sealed trait, collections/options, default values)
 - Limitations
 
@@ -154,7 +154,7 @@ Added to `docs/mkdocs.yml` nav.
 5. **Field naming is `String => String` function** (reference uses structured `FieldNaming` trait)
 6. **No `UnionType` / non-sealed ADT support** (sealed traits only)
 7. **No `@DefaultValue` annotation** (only Scala-level defaults)
-8. **No `@Reader`/`@Writer` per-field annotations** (only `@fieldName`)
+8. **No `@Reader`/`@Writer` per-field annotations** (only `@FieldName`)
 9. **`AutomaticMaterialization` always on** (reference requires opt-in)
 10. **No `DisableWarnings`/`Verbose` options**
 
@@ -166,7 +166,7 @@ Added to `docs/mkdocs.yml` nav.
 - [x] Extract and review ReactiveMongo-BSON macro source
 - [x] Identify key behavioral differences
 - [x] Document intentional differences in `REFERENCE-COMPARISON.md`
-- [x] Copy/adapt test cases from reference (see task 8) — Seq[String], single-member case class, @defaultValue, @reader, @writer, @noneAsNull
+- [x] Copy/adapt test cases from reference (see task 8) — Seq[String], single-member case class, @defaultValue, @reader, @writer, @NoneAsNull
 - [x] Fix recursive structure limitation (requires setHelper refactor) — see task 7
 - [x] Add `@NoneAsNull` annotation support — see task 8
 
@@ -214,12 +214,12 @@ Added to `docs/mkdocs.yml` nav.
 Reference implementation supports several annotations and config options that ours doesn't (see `REFERENCE-COMPARISON.md` for the full list). Tackled in order of user value, smallest first.
 
 **Status**:
-- [x] Limitation #2: `@noneAsNull` annotation — `None` writes as `BSONNull`
+- [x] Limitation #2: `@NoneAsNull` annotation — `None` writes as `BSONNull`
 - [x] Limitation #4: `TypeNaming` (SimpleName, FullName, Custom) — discriminator value customization
 - [x] Limitation #5: structured `FieldNaming` trait + helpers (SnakeCase, PascalCase, KebabCase, Custom)
-- [x] Limitation #7: `@defaultValue` annotation — per-field default override
-- [x] Limitation #8: `@reader` / `@writer` annotations — per-field custom handlers
-- [x] Limitation #11: `@flatten` annotation — merge inner case class fields into parent document
+- [x] Limitation #7: `@DefaultValue` annotation — per-field default override
+- [x] Limitation #8: `@Reader` / `@Writer` annotations — per-field custom handlers
+- [x] Limitation #11: `@Flatten` annotation — merge inner case class fields into parent document
 - [x] Port reference tests: `Seq[String]`, single-member case class
 
 **Deferred limitations** (with reason for deferral):
@@ -227,7 +227,7 @@ Reference implementation supports several annotations and config options that ou
 - [x] **Limitation #4: `TypeNaming` (full vs short class name discriminator)** — Done. Added `TypeNaming` sealed trait with `SimpleName` (default), `FullName`, and `Custom(f)`. Implemented a Scala 3-specific `fullNameOf` helper using `quotes.reflect.TypeRepr` to get full class names. Discriminator dispatch uses compile-time constants when possible and runtime `config.typeNaming(...)` calls for custom/un-evaluable configs.
 - [x] **Limitation #5 (rest): structured `FieldNaming` trait** — Done. Added `FieldNaming` sealed trait with `Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, and `Custom` variants. `BsonDocumentHandlerConfig` still stores a `String => String` internally for backward compatibility; `withFieldNaming(naming)` converts to it.
 - [ ] **Limitation #6: `UnionType` for non-sealed ADTs** — Large feature. The reference supports `UnionType[UA \/ UB]` (scalaz `\/` either) for non-sealed trait unions with `AutomaticMaterialization`. Requires the user to explicitly enumerate subtypes and tie them together via the `\/` type. Effort: large. Likely not worth it unless users ask for it.
-- [x] **Limitation #11: `@Flatten` annotation** — Done. Added `@flatten` annotation. A flattened field is read/written by deriving a handler for the inner type and applying it directly to the parent document. Nested flattening works recursively. Caveat: conflicting inner field names are not detected at compile time.
+- [x] **Limitation #11: `@Flatten` annotation** — Done. Added `@Flatten` annotation. A flattened field is read/written by deriving a handler for the inner type and applying it directly to the parent document. Nested flattening works recursively. Caveat: conflicting inner field names are not detected at compile time.
 - [ ] **Limitation #10: `DisableWarnings` / `Verbose` options** — Not applicable. We use `Environment.reportInfo` / `Environment.reportErrorAndAbort` unconditionally (the same as the reference's default). If we ever need to suppress noisy macro logs, we can add a config option.
 
 **Test count**: 43 tests passing (was 27 before this task).
@@ -275,12 +275,12 @@ Deleted 6 unused runtime helpers from `BsonDocumentHandlerFactories`:
 - **27 tests passing**
 
 ### ✅ Feature parity with reference (Task 8 partial)
-- `@noneAsNull` annotation (REFERENCE-COMPARISON #2)
+- `@NoneAsNull` annotation (REFERENCE-COMPARISON #2)
 - `TypeNaming` (SimpleName, FullName, Custom) (REFERENCE-COMPARISON #4)
 - `FieldNaming` structured trait + helpers (REFERENCE-COMPARISON #5)
-- `@defaultValue` annotation (REFERENCE-COMPARISON #7)
-- `@reader` / `@writer` annotations (REFERENCE-COMPARISON #8)
-- `@flatten` annotation (REFERENCE-COMPARISON #11)
+- `@DefaultValue` annotation (REFERENCE-COMPARISON #7)
+- `@Reader` / `@Writer` annotations (REFERENCE-COMPARISON #8)
+- `@Flatten` annotation (REFERENCE-COMPARISON #11)
 - Ported `Seq[String]` and single-member case class tests
 - **43 tests passing** (was 27)
 

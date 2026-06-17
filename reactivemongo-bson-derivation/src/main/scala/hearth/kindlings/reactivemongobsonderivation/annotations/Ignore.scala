@@ -7,4 +7,4 @@ import scala.annotation.StaticAnnotation
   * If the field must be readable, a default value must be defined,
   * either from the field Scala-level default, or via @defaultValue annotation.
   */
-final class ignore extends StaticAnnotation
+final class Ignore extends StaticAnnotation

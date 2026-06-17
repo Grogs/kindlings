@@ -10,7 +10,7 @@ trait AnnotationSupport { this: MacroCommons & StdExtensions =>
   protected def extractStringLiteralFromAnnotation(annotation: UntypedExpr): Option[String]
 
   /** Extracts the single positional argument of a single-argument annotation as an UntypedExpr. Useful for annotations
-    * like `@defaultValue(value)` that carry a typed value.
+    * like `@DefaultValue(value)` that carry a typed value.
     */
   protected def extractSingleArgFromAnnotation(annotation: UntypedExpr): Option[UntypedExpr]
 

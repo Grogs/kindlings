@@ -10,10 +10,10 @@ considering or planning a migration.
 - **Hearth-based macro infrastructure**: maintains correctness across recursive
   types, generic case classes, and sealed traits without `AutomaticMaterialization`
   opt-ins
-- **Always-on defaults**: Scala-level default values and `@defaultValue` annotations
+- **Always-on defaults**: Scala-level default values and `@DefaultValue` annotations
   work out of the box — no `ReadDefaultValues` flag needed
-- **Same annotation API**: `@fieldName` (instead of `@Key`), `@reader`, `@writer`,
-  `@flatten`, `@noneAsNull`, `@defaultValue` — familiar ergonomics
+- **Same annotation API**: `@FieldName` (instead of `@Key`), `@Reader`, `@Writer`,
+  `@Flatten`, `@NoneAsNull`, `@DefaultValue` — familiar ergonomics
 - **Structured config**: `BsonDocumentHandlerConfig` with `FieldNaming` and
   `TypeNaming` sealed traits and composable helpers
 - **Generated code**: follows the same patterns as jsoniter-derivation, circe-derivation
@@ -86,13 +86,13 @@ The output type `KindlingsBsonDocumentHandler[T]` is a subtype of the standard
 
 | Feature | ReactiveMongo | Kindlings | Notes |
 |---|---|---|---|
-| Override field key | `@Key("name")` | `@fieldName("name")` | Same behavior |
-| Custom reader per field | `@Reader` (type annotation) | `@reader(instance)` | Kindlings uses a value argument |
-| Custom writer per field | `@Writer` (type annotation) | `@writer(instance)` | Kindlings uses a value argument |
-| Flatten inner fields | `@Flatten` | `@flatten` | Same behavior |
-| None as BSONNull | `@NoneAsNull` | `@noneAsNull` | Same behavior |
-| Default value override | `@DefaultValue("val")` | `@defaultValue(val)` | Kindlings: argument is the field type, not string |
-| Ignore field | `@Ignore` | `@ignore` | Supported |
+| Override field key | `@Key("name")` | `@FieldName("name")` | Same behavior |
+| Custom reader per field | `@Reader` (type annotation) | `@Reader(instance)` | Kindlings uses a value argument |
+| Custom writer per field | `@Writer` (type annotation) | `@Writer(instance)` | Kindlings uses a value argument |
+| Flatten inner fields | `@Flatten` | `@Flatten` | Same behavior |
+| None as BSONNull | `@NoneAsNull` | `@NoneAsNull` | Same behavior |
+| Default value override | `@DefaultValue("val")` | `@DefaultValue(val)` | Kindlings: argument is the field type, not string |
+| Ignore field | `@Ignore` | `@Ignore` | Supported |
 | Skip field | `transient` | **Not supported** | Manual reader/writer needed |
 
 ### Custom reader/writer differences
@@ -104,12 +104,12 @@ to the field's type:
 case class Foo(@Reader BSONObjectID _id)
 ```
 
-In Kindlings, `@reader` and `@writer` take a **value argument**:
+In Kindlings, `@Reader` and `@Writer` take a **value argument**:
 
 ```scala
 implicit val objectIdReader: BSONReader[BSONObjectID] = ???
 
-case class Foo(@reader(objectIdReader) _id: BSONObjectID)
+case class Foo(@Reader(objectIdReader) _id: BSONObjectID)
 ```
 
 ## Configuration
@@ -145,10 +145,10 @@ Available config knobs:
 ### 1. Default values are always-on
 
 **Reference**: Requires `ReadDefaultValues` opt-in.
-**Kindlings**: Always applied. Scala-level defaults and `@defaultValue` both work.
+**Kindlings**: Always applied. Scala-level defaults and `@DefaultValue` both work.
 
 Migration: If you explicitly omitted `ReadDefaultValues` to suppress defaults,
-you may see different behavior. Add explicit `Option` types or `@fieldName` to
+you may see different behavior. Add explicit `Option` types or `@FieldName` to
 handle missing fields the way you want.
 
 ### 2. No `AutomaticMaterialization` opt-in
@@ -171,7 +171,7 @@ set `config.withTypeNaming(TypeNaming.SimpleName)`.
 
 ### 4. `BSONNull` always decodes as `None`
 
-**Reference**: Without `@noneAsNull`, a `BSONNull` value for an `Option` field
+**Reference**: Without `@NoneAsNull`, a `BSONNull` value for an `Option` field
 would **fail to read** (field expected to be missing, not present as null).
 **Kindlings**: `BSONNull` always decodes as `None`.
 
@@ -199,9 +199,9 @@ Migration: Refactor hierarchies to use sealed traits, or provide manual
 **Reference**: `@Ignore` on a field means it is never serialized to BSON
 (completely absent from the document). If the field must be readable,
 a default must be provided.
-**Kindlings**: Supported via `@ignore` annotation. Field is skipped during
+**Kindlings**: Supported via `@Ignore` annotation. Field is skipped during
 both reading and writing. If a default value is defined (Scala-level or
-via `@defaultValue`), it is used when reading; otherwise the field gets a
+via `@DefaultValue`), it is used when reading; otherwise the field gets a
 `null` value (which may cause issues for non-`Option` types).
 
 ### 8. Non-`String` map keys
@@ -254,12 +254,12 @@ implicit val handler: KindlingsBsonDocumentHandler[MyClass] =
 
 | Before | After |
 |---|---|
-| `@Key("name")` | `@fieldName("name")` |
-| `@Flatten` | `@flatten` |
-| `@NoneAsNull` | `@noneAsNull` |
-| `@DefaultValue("str")` | `@defaultValue("str")` |
-| `@Reader SomeType` | `@reader(instance)` |
-| `@Writer SomeType` | `@writer(instance)` |
+| `@Key("name")` | `@FieldName("name")` |
+| `@Flatten` | `@Flatten` |
+| `@NoneAsNull` | `@NoneAsNull` |
+| `@DefaultValue("str")` | `@DefaultValue("str")` |
+| `@Reader SomeType` | `@Reader(instance)` |
+| `@Writer SomeType` | `@Writer(instance)` |
 
 ### Step 5: Adjust sealed trait discriminators
 
@@ -312,6 +312,13 @@ Manual handlers are used as fallback for field-level resolution.
 **Q: Does this work with Scala.js or Scala Native?**
 
 No. reactivemongo-bson-api is JVM-only, so Kindlings BSON is JVM-only too.
+
+**Q: What about non-case classes? The reference handles `class UB(val s: String)`.**
+
+Kindlings relies on Hearth's `CaseClass.parse`, which requires Scala case
+classes. Regular classes (`class` without `case`) are not supported. If you
+have regular classes in your model, convert them to case classes, or provide
+manual `BSONDocumentHandler` instances via `@Reader`/`@Writer`.
 
 **Q: What about compile-time overhead?**
 
