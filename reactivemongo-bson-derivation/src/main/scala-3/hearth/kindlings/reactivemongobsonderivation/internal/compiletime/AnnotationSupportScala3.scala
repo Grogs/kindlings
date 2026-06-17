@@ -9,7 +9,7 @@ trait AnnotationSupportScala3 extends AnnotationSupport { this: MacroCommonsScal
   override protected def findAnnotationOfType[Ann: Type](param: Parameter): Option[UntypedExpr] = {
     val annTpe = UntypedType.fromTyped[Ann]
     param.asUntyped.annotations.find { term =>
-      term.tpe =:= annTpe
+      term.tpe <:< annTpe
     }
   }
 

@@ -266,8 +266,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val handler: KindlingsBsonDocumentHandler[WithValueType] = KindlingsBsonDocumentHandler.derived[WithValueType]
 
         val value = WithValueType(WrapperId(42), "test")
-        // Value types wrap as {"value": <inner_bson>} in their own document
-        val doc = BSONDocument("id" -> BSONDocument("value" -> 42), "name" -> "test")
+        // Value types unwrap to their underlying value inline in the parent document
+        val doc = BSONDocument("id" -> 42, "name" -> "test")
 
         assertEquals(handler.readDocument(doc).get, value)
         assertEquals(handler.writeTry(value).get, doc)
@@ -725,9 +725,10 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[RenamedId] = KindlingsBsonDocumentHandler.derived[RenamedId]
 
-        val value = RenamedId("id-value", "foo")
+        val id = reactivemongo.api.bson.BSONObjectID.generate()
+        val value = RenamedId(id, "foo")
         val written = handler.writeTry(value).get
-        assertEquals(written.get("_id").map(_.asInstanceOf[BSONString].value), Some("id-value"))
+        assertEquals(written.get("_id").map(_.asInstanceOf[BSONObjectID]), Some(id))
         assertEquals(written.get("value").map(_.asInstanceOf[BSONString].value), Some("foo"))
         assertEquals(handler.readDocument(written).get, value)
       }
@@ -743,19 +744,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.readDocument(handler.writeTry(bar2).get).get, bar2)
       }
 
-      test("be generated for value class (wrapped)") {
+      test("be generated for value class") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[WithValueTypeField] =
           KindlingsBsonDocumentHandler.derived[WithValueTypeField]
 
         val value = WithValueTypeField("foo", WithValueClass(42))
         val written = handler.writeTry(value).get
-        // Our value-class handling wraps as {"value": <underlying>} rather than unwrapping inline
-        assertEquals(written.get("name").map(_.asInstanceOf[BSONString].value), Some("foo"))
-        assertEquals(
-          written.get("id").flatMap(_.asInstanceOf[BSONDocument].get("value")).map(_.asInstanceOf[BSONInteger].value),
-          Some(42)
-        )
+        assertEquals(written, BSONDocument("name" -> "foo", "id" -> 42))
         assertEquals(handler.readDocument(written).get, value)
       }
 
@@ -775,10 +771,10 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val handler: KindlingsBsonDocumentHandler[WithDefaultValues2] =
           KindlingsBsonDocumentHandler.derived[WithDefaultValues2]
 
-        val result = handler.readDocument(BSONDocument("id" -> 1)).get
-        assertEquals(result.id, 1)
-        assertEquals(result.title, "default2")
-        assertEquals(result.range, Range(7, 11))
+        assertEquals(
+          handler.readDocument(BSONDocument("id" -> 1)).get,
+          WithDefaultValues2(1, "default2", Some(45.6f), Range(7, 11))
+        )
       }
 
       test("Map with String keys") {

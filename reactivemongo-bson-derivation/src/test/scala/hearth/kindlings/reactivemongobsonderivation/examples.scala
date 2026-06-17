@@ -134,7 +134,7 @@ object NestModule {
   case class Nested(name: String)
 }
 
-final case class RenamedId(@fieldName("_id") myID: String, value: String)
+final case class RenamedId(@fieldName("_id") myID: reactivemongo.api.bson.BSONObjectID, value: String)
 
 final case class WithDefaultValues1(
     id: Int,
