@@ -38,16 +38,16 @@ This is a friendly difference — users get default values out of the box.
 
 **Status**: Intentional — more forgiving for users.
 
-### 4. Discriminator value uses simple (short) class name
+### 4. Discriminator value uses full (qualified) class name
 
 **Reference**: Default `TypeNaming` is `FullName`:
 - `sealed trait Foo; case class Bar extends Foo` → discriminator value: `Bar` (in the default package)
 - Nested: `object TreeModule { sealed trait Node; case class Leaf extends Node }` → discriminator value: `TreeModule.Leaf` (full name with outer objects joined by `.`)
 - Configurable via `MacroConfiguration(typeNaming = TypeNaming.SimpleName)` to get just the simple name.
 
-**Ours**: We provide `TypeNaming.SimpleName` (default), `TypeNaming.FullName`, and `TypeNaming.Custom(f)`. Default is `SimpleName` to preserve backward compatibility.
+**Ours**: Same default — `TypeNaming.FullName`. Also provides `TypeNaming.SimpleName` and `TypeNaming.Custom(f)`.
 
-**Status**: **Done** (see task 8). Reference defaults to `FullName`; we default to `SimpleName`.
+**Status**: **Done** — defaults now match.
 
 ### 5. Field naming strategies
 

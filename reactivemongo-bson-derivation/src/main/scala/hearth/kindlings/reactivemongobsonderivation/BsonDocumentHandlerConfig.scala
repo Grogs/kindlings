@@ -6,7 +6,7 @@ package hearth.kindlings.reactivemongobsonderivation
   *   Strategy to transform field names (default: identity). Stored as a `FieldNaming` sealed trait so the config can be
   *   evaluated at compile time in the common case.
   * @param typeNaming
-  *   Strategy to map sealed-trait/enum case types to discriminator values (default: `TypeNaming.SimpleName`)
+  *   Strategy to map sealed-trait/enum case types to discriminator values (default: `TypeNaming.FullName`)
   * @param discriminatorFieldName
   *   The field name used for sealed trait/enum discrimination (None = wrapper-style, Some(name) = discriminator-style,
   *   default: Some("className"))
@@ -15,7 +15,7 @@ package hearth.kindlings.reactivemongobsonderivation
   */
 final case class BsonDocumentHandlerConfig(
     fieldNaming: FieldNaming = FieldNaming.Identity,
-    typeNaming: TypeNaming = TypeNaming.SimpleName,
+    typeNaming: TypeNaming = TypeNaming.FullName,
     discriminatorFieldName: Option[String] = BsonDocumentHandlerConfig.defaultDiscriminatorFieldName,
     skipUnexpectedFields: Boolean = true
 ) {

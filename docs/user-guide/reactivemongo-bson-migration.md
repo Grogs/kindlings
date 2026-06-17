@@ -137,7 +137,7 @@ Available config knobs:
 |---|---|---|
 | Field name mapping | `config.fieldNameMapper` / `config.withFieldNaming(naming)` | Identity |
 | Discriminator field name | `config.discriminatorFieldName` | `"className"` |
-| Type naming | `config.typeNaming` / `config.withTypeNaming(naming)` | `TypeNaming.SimpleName` |
+| Type naming | `config.typeNaming` / `config.withTypeNaming(naming)` | `TypeNaming.FullName` |
 | Optional formatting | `config.noneAsNull` / `config.withNoneAsNull` | `false` |
 
 ## Behavioral Differences
@@ -164,10 +164,10 @@ are always derived.
 
 **Reference**: Default discriminator value is `FullName`
 (e.g., `"com.example.Tree.Leaf"`).
-**Kindlings**: Default is `SimpleName` (e.g., `"Leaf"`).
+**Kindlings**: Same — default is `FullName`.
 
-Migration: Set `config.withTypeNaming(TypeNaming.FullName)` to retain
-the reference's default behavior.
+Migration: No change needed. If you were using `SimpleName` short names,
+set `config.withTypeNaming(TypeNaming.SimpleName)`.
 
 ### 4. `BSONNull` always decodes as `None`
 
@@ -255,12 +255,12 @@ implicit val handler: KindlingsBsonDocumentHandler[MyClass] =
 
 ### Step 5: Adjust sealed trait discriminators
 
-If you relied on `FullName` discriminator values (the reference default),
+If you relied on `SimpleName` discriminator values,
 add explicit config:
 
 ```scala
 implicit val config: BsonDocumentHandlerConfig =
-  BsonDocumentHandlerConfig.default.withTypeNaming(TypeNaming.FullName)
+  BsonDocumentHandlerConfig.default.withTypeNaming(TypeNaming.SimpleName)
 ```
 
 ### Step 6: Test round-trips

@@ -296,15 +296,21 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val handler: KindlingsBsonDocumentHandler[SimpleEnum] = KindlingsBsonDocumentHandler.derived[SimpleEnum]
 
         // Test read
-        val fooDoc = BSONDocument("className" -> "Foo")
+        val fooDoc = BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Foo")
         assertEquals(handler.readDocument(fooDoc).get, Foo)
 
-        val barDoc = BSONDocument("className" -> "Bar")
+        val barDoc = BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Bar")
         assertEquals(handler.readDocument(barDoc).get, Bar)
 
         // Test write
-        assertEquals(handler.writeTry(Foo).get, fooDoc)
-        assertEquals(handler.writeTry(Bar).get, barDoc)
+        assertEquals(
+          handler.writeTry(Foo).get,
+          BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Foo")
+        )
+        assertEquals(
+          handler.writeTry(Bar).get,
+          BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Bar")
+        )
       }
 
       test("sealed trait - round trip") {
@@ -333,17 +339,40 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val noExpr = NoExpr
 
         // Test read
-        assertEquals(handler.readDocument(BSONDocument("className" -> "Num", "value" -> 42)).get, num)
         assertEquals(
-          handler.readDocument(BSONDocument("className" -> "Str", "value" -> "hello")).get,
+          handler
+            .readDocument(
+              BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Num", "value" -> 42)
+            )
+            .get,
+          num
+        )
+        assertEquals(
+          handler
+            .readDocument(
+              BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Str", "value" -> "hello")
+            )
+            .get,
           str
         )
-        assertEquals(handler.readDocument(BSONDocument("className" -> "NoExpr")).get, noExpr)
+        assertEquals(
+          handler.readDocument(BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.NoExpr")).get,
+          noExpr
+        )
 
         // Test write
-        assertEquals(handler.writeTry(num).get, BSONDocument("className" -> "Num", "value" -> 42))
-        assertEquals(handler.writeTry(str).get, BSONDocument("className" -> "Str", "value" -> "hello"))
-        assertEquals(handler.writeTry(noExpr).get, BSONDocument("className" -> "NoExpr"))
+        assertEquals(
+          handler.writeTry(num).get,
+          BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Num", "value" -> 42)
+        )
+        assertEquals(
+          handler.writeTry(str).get,
+          BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Str", "value" -> "hello")
+        )
+        assertEquals(
+          handler.writeTry(noExpr).get,
+          BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.NoExpr")
+        )
       }
 
       test("recursive structure (Tree)") {
@@ -483,7 +512,10 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(Foo).get
         val discriminatorField = written.get("kind")
         assert(discriminatorField.isDefined, "Should have 'kind' field as discriminator")
-        assertEquals(discriminatorField.get.asInstanceOf[BSONString].value, "Foo")
+        assertEquals(
+          discriminatorField.get.asInstanceOf[BSONString].value,
+          "hearth.kindlings.reactivemongobsonderivation.Foo"
+        )
 
         // Read with custom discriminator
         val result = handler.readDocument(written).get
