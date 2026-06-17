@@ -124,7 +124,7 @@ The following reference tests cover edge cases we should also test:
 
 1. **`Optional` field with `BSONNull` and missing** — covered (see `@noneAsNull - explicit BSONNull` test)
 2. **Recursive structure** (e.g., `Tree`) — **SUPPORTED** (see task 7, `recursive structure (Tree)` test)
-3. **Generic case class** (`GenSeq`) — not currently tested
+3. **Generic case class** (`GenSeq`) — ported using `GenSeq[Option[SingleBigDecimal]]`
 4. **Empty case class** — already covered
 5. **`@Key` / `@fieldName` annotation** — already covered
 6. **Sealed family with case objects** — already covered
