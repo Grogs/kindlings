@@ -215,7 +215,6 @@ lazy val reactivemongoBsonDerivation = projectMatrix
   .in(file("reactivemongo-bson-derivation"))
   .someVariations(List(versions.scala3), List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-reactivemongo-bson-derivation",
     name := "kindlings-reactivemongo-bson-derivation",
