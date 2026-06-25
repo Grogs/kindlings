@@ -18,7 +18,8 @@ import scala.util.Try
 
 trait BsonDocumentHandlerMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
-    with hearth.kindlings.derivation.compiletime.LoadStandardExtensionsOnce {
+    with hearth.kindlings.derivation.compiletime.LoadStandardExtensionsOnce
+    with hearth.kindlings.derivation.compiletime.MethodFolds {
   this: MacroCommons & StdExtensions & AnnotationSupport =>
 
   override protected def derivationSettingsNamespace: String = "reactivemongoBsonDerivation"
@@ -58,7 +59,7 @@ trait BsonDocumentHandlerMacrosImpl
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
       Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
-        case method if method.value.isImplicit => method.value.asUntyped
+        case method if method.isImplicit => method.asUntyped
       }
   }
 
@@ -1154,13 +1155,11 @@ trait BsonDocumentHandlerMacrosImpl
       */
     private def computeDefaultExpr[Field: Type](param: Parameter): Option[Expr[Field]] = {
       val fromParamDefault: Option[Expr[Field]] =
-        if (param.hasDefault) param.defaultValue.flatMap { existentialOuter =>
-          val methodOf = existentialOuter.value
-          methodOf.value match {
-            case noInstance: Method.NoInstance[?] =>
-              import noInstance.Returned; noInstance(Map.empty).toOption.map(_.asInstanceOf[Expr[Field]])
-            case _ => None
-          }
+        if (param.hasDefault) param.defaultValue.flatMap { method =>
+          foldInstanceFree(method, "Default value")(
+            onTypes = _ => Map.empty,
+            onValues = _ => Map.empty
+          ).toOption.map { ee => import ee.Underlying; ee.value.asInstanceOf[Expr[Field]] }
         }
         else None
 
@@ -1541,9 +1540,12 @@ trait BsonDocumentHandlerMacrosImpl
                         Expr.quote(Expr.splice(arrExpr)(Expr.splice(Expr(idx))).asInstanceOf[Field])
                       (name, fieldExpr.as_??)
                     }.toMap
-                    caseClass.primaryConstructor(fieldMap) match {
-                      case Right(ce)   => MIO.pure(ce.asInstanceOf[Expr[A]])
-                      case Left(error) =>
+                    foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                      onTypes = _ => Map.empty,
+                      onValues = _ => fieldMap
+                    ) match {
+                      case Right(constructExpr) => MIO.pure(constructExpr.value.asInstanceOf[Expr[A]])
+                      case Left(error)          =>
                         val err =
                           BsonDocumentHandlerDerivationError.CannotConstructType(Type[A].prettyPrint, Some(error))
                         Log.error(err.message) >> MIO.fail(err)
