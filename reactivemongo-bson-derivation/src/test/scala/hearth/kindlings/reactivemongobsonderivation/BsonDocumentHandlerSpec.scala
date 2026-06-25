@@ -2,6 +2,10 @@ package hearth.kindlings.reactivemongobsonderivation
 
 import hearth.MacroSuite
 import reactivemongo.api.bson.*
+// On Scala 2.13, the macro-reified calls to `BSONDocument(... -> ...)` reference the package
+// object via the term `bson` (i.e. `bson.ElementProducer`). Scala 3's `import x.*` exposes
+// that term automatically; Scala 2's `import x._` does not, so we add the alias explicitly.
+import reactivemongo.api.bson as bson
 
 final class BsonDocumentHandlerSpec extends MacroSuite {
 
@@ -473,7 +477,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
 
       test("SimpleName discriminator with nested sealed trait") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.SimpleName)
+        implicit val givenConfig: BsonDocumentHandlerConfig =
+          BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.SimpleName)
 
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[TreeModule.Node] =
@@ -490,7 +495,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
 
       test("Custom type naming transforms simple name") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.Custom(_.toLowerCase))
+        implicit val givenConfig: BsonDocumentHandlerConfig =
+          BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.Custom(_.toLowerCase))
 
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[SimpleEnum] =
@@ -517,7 +523,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
     group("config") {
       test("custom discriminator field name") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(discriminatorFieldName = Some("kind"))
+        implicit val givenConfig: BsonDocumentHandlerConfig =
+          BsonDocumentHandlerConfig(discriminatorFieldName = Some("kind"))
 
         val handler = KindlingsBsonDocumentHandler.derived[SimpleEnum]
 
@@ -536,7 +543,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
 
       test("snake_case field name mapper") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withSnakeCaseFieldNames
+        implicit val givenConfig: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withSnakeCaseFieldNames
 
         val handler = KindlingsBsonDocumentHandler.derived[CamelCaseFields]
         val value = CamelCaseFields("Alice", "Smith", 30)
@@ -555,7 +562,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
 
       test("PascalCase field name mapper") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withPascalCaseFieldNames
+        implicit val givenConfig: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withPascalCaseFieldNames
 
         val handler = KindlingsBsonDocumentHandler.derived[SnakeFields]
         val value = SnakeFields("Alice", "Smith")
@@ -572,7 +579,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
       test("FieldNaming structured API") {
         import hearth.kindlings.reactivemongobsonderivation.FieldNaming
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withFieldNaming(FieldNaming.SnakeCase)
+        implicit val givenConfig: BsonDocumentHandlerConfig =
+          BsonDocumentHandlerConfig().withFieldNaming(FieldNaming.SnakeCase)
 
         val handler = KindlingsBsonDocumentHandler.derived[CamelCaseFields]
         val value = CamelCaseFields("Alice", "Smith", 30)
@@ -587,7 +595,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
 
       test("skipUnexpectedFields=true ignores unknown fields") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = true)
+        implicit val givenConfig: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = true)
 
         val handler = KindlingsBsonDocumentHandler.derived[Person]
         val doc = BSONDocument("name" -> "Alice", "age" -> 30, "extra" -> "ignored", "another" -> 42)
@@ -597,7 +605,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
 
       test("skipUnexpectedFields=false rejects unknown fields") {
-        given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = false)
+        implicit val givenConfig: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = false)
 
         val handler = KindlingsBsonDocumentHandler.derived[Person]
         val doc = BSONDocument("name" -> "Alice", "age" -> 30, "extra" -> "ignored")

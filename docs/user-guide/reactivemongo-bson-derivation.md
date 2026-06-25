@@ -260,7 +260,7 @@ handler.readDocument(BSONDocument()).get
 
 ## Limitations
 
-- Scala 3 only (Scala 2.13 cross-compilation is a future task)
+- Cross-compiled for Scala 2.13 and Scala 3 (JVM only — `reactivemongo-bson-api` is JVM-only)
 - JVM only (Scala.js / Scala Native are not applicable — `reactivemongo-bson-api` is JVM-only)
 - Non-sealed (open) traits are not supported; only sealed trait / Scala 3 enum hierarchies work
 - `@Flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys

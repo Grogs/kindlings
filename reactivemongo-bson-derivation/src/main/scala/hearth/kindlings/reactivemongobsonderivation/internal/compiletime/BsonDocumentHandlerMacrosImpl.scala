@@ -8,7 +8,6 @@ import hearth.std.*
 
 import hearth.kindlings.reactivemongobsonderivation.{
   BsonDocumentHandlerConfig,
-  FieldNaming,
   KindlingsBsonDocumentHandler,
   TypeNaming
 }
@@ -255,7 +254,9 @@ trait BsonDocumentHandlerMacrosImpl
 
   def resolveBsonReader[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
     implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
+    @scala.annotation.nowarn("msg=is never used")
     implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
+    @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
     Type[reactivemongo.api.bson.BSONReader[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
@@ -299,8 +300,11 @@ trait BsonDocumentHandlerMacrosImpl
       isCollection: IsCollectionOf[A, Item],
       fieldCtx: DerivationCtx[A]
   ): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    @scala.annotation.nowarn("msg=is never used")
     implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
+    @scala.annotation.nowarn("msg=is never used")
     implicit val BsonArrayT: Type[reactivemongo.api.bson.BSONArray] = Types.BsonArray
+    @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
     val factoryExpr = isCollection.factory
     val buildStep = isCollection.build
@@ -361,6 +365,7 @@ trait BsonDocumentHandlerMacrosImpl
       fieldCtx: DerivationCtx[A]
   ): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
     import isMap.{Key, Value}
+    @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
     resolveBsonReader[Value](fieldCtx.nest[Value]).map { valueReaderExpr =>
       Expr.quote {
@@ -394,7 +399,9 @@ trait BsonDocumentHandlerMacrosImpl
 
   def resolveBsonWriter[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
     implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+    @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
+    @scala.annotation.nowarn("msg=is never used")
     implicit val TryBsonValueT: Type[scala.util.Try[reactivemongo.api.bson.BSONValue]] =
       Types.TryCtor[reactivemongo.api.bson.BSONValue]
     Type[reactivemongo.api.bson.BSONWriter[A]]
@@ -437,7 +444,9 @@ trait BsonDocumentHandlerMacrosImpl
       isCollection: IsCollectionOf[A, Item],
       fieldCtx: DerivationCtx[A]
   ): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
+    @scala.annotation.nowarn("msg=is never used")
     implicit val TryBsonValueT: Type[scala.util.Try[reactivemongo.api.bson.BSONValue]] =
       Types.TryCtor[reactivemongo.api.bson.BSONValue]
     resolveBsonWriter[Item](fieldCtx.nest[Item]).flatMap { itemWriterExpr =>
@@ -473,7 +482,9 @@ trait BsonDocumentHandlerMacrosImpl
       isMap: IsMapOf[A, Pair],
       fieldCtx: DerivationCtx[A]
   ): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
+    @scala.annotation.nowarn("msg=is never used")
     implicit val TryBsonValueT: Type[scala.util.Try[reactivemongo.api.bson.BSONValue]] =
       Types.TryCtor[reactivemongo.api.bson.BSONValue]
     resolveBsonWriter[Pair](fieldCtx.nest[Pair]).flatMap { pairWriterExpr =>
@@ -514,11 +525,22 @@ trait BsonDocumentHandlerMacrosImpl
     val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Reader[A]]
     getAnnotationValueUntyped(param)(annTpe).map { untyped =>
       // The annotation argument is a BSONReader[A]-typed value, but UntypedExpr loses the type.
-      // Wrap it in a quote that upcasts to the expected reader type.
-      implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
-      Expr.quote {
-        (Expr.splice(untyped.asTyped)).asInstanceOf[reactivemongo.api.bson.BSONReader[A]]
-      }
+      // Wrap it in a quote that upcasts to the expected reader type. The `.asInstanceOf` keeps the
+      // path through `Expr.splice` stable across Scala 2 and 3; using `asTyped[...]` here instead
+      // triggers Hearth's "Nested context should not loop" (-Xcheck-macros) on Scala 3.
+      annotateReaderValue[A](untyped)
+    }
+  }
+
+  /** Helper kept outside the splice so the Scala 2 reifier materializes `Type[BSONReader[A]]` as a real type parameter,
+    * not a `param.tpe.*` path-dependent reference (see `hearth-cross-compilation` pitfall #3/#23).
+    */
+  private def annotateReaderValue[A: Type](untyped: UntypedExpr): Expr[reactivemongo.api.bson.BSONReader[A]] = {
+    implicit val ReaderT: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
+    Expr.quote {
+      Expr
+        .splice(untyped.asTyped[reactivemongo.api.bson.BSONReader[A]])
+        .asInstanceOf[reactivemongo.api.bson.BSONReader[A]]
     }
   }
 
@@ -526,10 +548,16 @@ trait BsonDocumentHandlerMacrosImpl
   def annotatedWriter[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
     val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Writer[A]]
     getAnnotationValueUntyped(param)(annTpe).map { untyped =>
-      implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
-      Expr.quote {
-        (Expr.splice(untyped.asTyped)).asInstanceOf[reactivemongo.api.bson.BSONWriter[A]]
-      }
+      annotateWriterValue[A](untyped)
+    }
+  }
+
+  private def annotateWriterValue[A: Type](untyped: UntypedExpr): Expr[reactivemongo.api.bson.BSONWriter[A]] = {
+    implicit val WriterT: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+    Expr.quote {
+      Expr
+        .splice(untyped.asTyped[reactivemongo.api.bson.BSONWriter[A]])
+        .asInstanceOf[reactivemongo.api.bson.BSONWriter[A]]
     }
   }
 
@@ -791,9 +819,12 @@ trait BsonDocumentHandlerMacrosImpl
     private def deriveCollectionHandler[A: DerivationCtx, Item: Type](
         isCollection: IsCollectionOf[A, Item]
     ): MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] = {
+      @scala.annotation.nowarn("msg=is never used")
       implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
+      @scala.annotation.nowarn("msg=is never used")
       implicit val BsonArrayT: Type[reactivemongo.api.bson.BSONArray] = Types.BsonArray
       implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
+      @scala.annotation.nowarn("msg=is never used")
       implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
       implicit val TryBsonDocumentT: Type[scala.util.Try[BSONDocument]] = Types.TryCtor[BSONDocument]
 
@@ -885,9 +916,12 @@ trait BsonDocumentHandlerMacrosImpl
     private def deriveMapHandler[A: DerivationCtx, Pair: Type](
         isMap: IsMapOf[A, Pair]
     ): MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] = {
+      @scala.annotation.nowarn("msg=is never used")
       implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
       implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
+      @scala.annotation.nowarn("msg=is never used")
       implicit val StringT: Type[String] = Types.String
+      @scala.annotation.nowarn("msg=is never used")
       implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
       implicit val TryBsonDocumentT: Type[scala.util.Try[BSONDocument]] = Types.TryCtor[BSONDocument]
 
@@ -1159,7 +1193,7 @@ trait BsonDocumentHandlerMacrosImpl
           foldInstanceFree(method, "Default value")(
             onTypes = _ => Map.empty,
             onValues = _ => Map.empty
-          ).toOption.map { ee => import ee.Underlying; ee.value.asInstanceOf[Expr[Field]] }
+          ).toOption.map(ee => ee.value.asInstanceOf[Expr[Field]])
         }
         else None
 
@@ -1168,14 +1202,34 @@ trait BsonDocumentHandlerMacrosImpl
         getAnnotationValueUntyped(param)(annTpe).map { untyped =>
           // Widen the annotation argument to the field type at runtime.
           // This handles cases like `@DefaultValue(Some(45.6f))` for an `Option[Float]` field,
-          // where the argument expression has a more specific type (`Some[Float]`).
+          // where the argument expression has a more specific type (`Some[Float]`). The
+          // `.asInstanceOf` keeps the splice stable across Scala 2 and Scala 3 (see note on
+          // `annotateReaderValue`); a plain `asTyped[Field]` triggers Hearth's
+          // "Nested context should not loop" (-Xcheck-macros) on Scala 3.
           Expr.quote {
-            Expr.splice(untyped.asTyped).asInstanceOf[Field]
+            Expr.splice(untyped.asTyped[Field]).asInstanceOf[Field]
           }
         }
       }
 
       fromParamDefault.orElse(fromAnnotation)
+    }
+
+    /** Build a `(name, fieldExpr.as_??)` pair for the constructor's field map.
+      *
+      * Extracted as a helper so that `Field` (from `param.tpe.Underlying`) is passed as a real type parameter
+      * `[Field: Type]` and the resulting `Expr[Field]` no longer references the macro-time `param` path-dependently.
+      * Without this, the Scala 2 reifier encodes `Field` as `param.tpe.Field` and the generated code references the
+      * macro-only `param` value, which does not exist at the call site (see `hearth-cross-compilation` pitfall #3/#23).
+      */
+    private def buildConstructorFieldExpr[Field: Type](
+        arrExpr: Expr[Array[Any]],
+        idx: Int,
+        name: String
+    ): (String, Expr_??) = {
+      val fieldExpr: Expr[Field] =
+        Expr.quote(Expr.splice(arrExpr)(Expr.splice(Expr(idx))).asInstanceOf[Field])
+      (name, fieldExpr.as_??)
     }
 
     private def buildFieldReadExpr[Field: Type](
@@ -1536,9 +1590,7 @@ trait BsonDocumentHandlerMacrosImpl
                   .traverse { arrExpr =>
                     val fieldMap: Map[String, Expr_??] = fieldsList.zipWithIndex.map { case ((name, param), idx) =>
                       import param.tpe.Underlying as Field
-                      val fieldExpr: Expr[Field] =
-                        Expr.quote(Expr.splice(arrExpr)(Expr.splice(Expr(idx))).asInstanceOf[Field])
-                      (name, fieldExpr.as_??)
+                      buildConstructorFieldExpr[Field](arrExpr, idx, name)
                     }.toMap
                     foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
                       onTypes = _ => Map.empty,
@@ -1553,6 +1605,7 @@ trait BsonDocumentHandlerMacrosImpl
                   }
                   .map(_.build[A])
               } yield {
+                @scala.annotation.nowarn("msg=is never used")
                 implicit val StringT: Type[String] = Types.String
                 val listExpr = fieldReads.toList.foldRight(Expr.quote(List.empty[Try[Any]])) { case (read, acc) =>
                   Expr.quote(Expr.splice(read) :: Expr.splice(acc))
@@ -1631,8 +1684,10 @@ trait BsonDocumentHandlerMacrosImpl
     private def deriveEnumHandler[A: DerivationCtx](
         enumm: Enum[A]
     ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
+      @scala.annotation.nowarn("msg=is never used")
       implicit val StringT: Type[String] = Types.String
       implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
+      @scala.annotation.nowarn("msg=is never used")
       implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
       implicit val TryBsonDocumentT: Type[scala.util.Try[BSONDocument]] = Types.TryCtor[BSONDocument]
 
@@ -1646,7 +1701,7 @@ trait BsonDocumentHandlerMacrosImpl
           val err = BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint)
           Log.error(err.message) >> MIO.fail(err)
 
-        case Some(childrenNel) =>
+        case Some(_) =>
           // Extract discriminator field name at compile time if possible, otherwise use default
           val discriminatorFieldExpr: Expr[String] =
             ctx.evaluatedConfig.flatMap(_.discriminatorFieldName) match {

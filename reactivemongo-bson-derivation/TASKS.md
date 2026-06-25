@@ -91,26 +91,33 @@ Apply patterns from `kindlings-runtime-perf` skill:
 
 ## Low Priority
 
-### 4. Scala 2.13 cross-compilation [PENDING]
+### 4. Scala 2.13 cross-compilation [DONE]
 **Impact**: Support Scala 2.13 projects
 **Effort**: Medium
 
-Current state: Scala 3 only
+**Implementation**:
+1. Created `AnnotationSupportScala2` (`scala-2/.../internal/compiletime/`) mirroring the Scala 3 half — Heart's typed annotation API is platform-agnostic, but our `getAnnotationValueUntyped` (for `@DefaultValue`/`@Reader`/`@Writer` which carry a typed value) needs a per-platform extractor.
+2. Created Scala 2 `BsonDocumentHandlerMacros` macro-bundle class (no enclosing `object`; Scala 2 macro bundles are referenced directly).
+3. Created Scala 2 `KindlingsBsonDocumentHandlerCompanionCompat` with `implicit def derived[A] = macro ...`.
+4. `build.sbt`: switched from `List(versions.scala3)` to `versions.scalas` (both 2.13 and 3) on the JVM axis.
+5. Shared test suite (`BsonDocumentHandlerSpec.scala`, `examples.scala`) compiled unchanged for both Scala versions.
 
-**Fix**:
-1. Create `AnnotationSupportScala2` in `scala-2/` directory
-2. Use cross-platform `Expr.quote`/`splice` patterns
-3. Update `build.sbt` to include Scala 2.13 JVM target
-4. Add Scala 2 test cases
+**Cross-version pitfalls hit and fixed**:
+- **Scala 2 macro bundle alias**: an enclosing `object` shadowing the macro-bundle `class` causes "macro implementation reference is ambiguous"; removed the object.
+- **Path-dependent types in `Expr.quote`** (pitfall #3/#23): the constructor lambda's `Expr.quote(arr(i).asInstanceOf[Field])` reified `Field` as `param.tpe.Field`, leaking the macro-time `param` value into the generated code. Extracted `buildConstructorFieldExpr[Field: Type]` so `Field` is a real type parameter; the caller does `import param.tpe.Underlying as Field` *outside* the helper / quote.
+- **`.asTyped[T]` with no `.asInstanceOf` cast triggers Hearth's "Nested context should not loop" (`-Xcheck-macros`) on Scala 3**: kept the cross-version-safe form `Expr.quote { Expr.splice(untyped.asTyped[T]).asInstanceOf[T] }` for `@Reader`/`@Writer`/`@DefaultValue`.
+- **Scala 3 `given` syntax in test file**: replaced 8 `given BsonDocumentHandlerConfig = ...` with `implicit val givenConfig: BsonDocumentHandlerConfig = ...` (works on both Scala versions).
+- **`bson.ElementProducer` reference in macro-reified `BSONDocument` builder**: Scala 2 `import x._` doesn't expose the package term `bson`; Scala 3's `import x.*` does. Added `import reactivemongo.api.bson as bson` to the test file.
+- **Unused-warnings-as-errors** (`-Werror`): the Scala 2 compiler is stricter than Scala 3 — added `@scala.annotation.nowarn("msg=is never used")` to the cross-impl's locally-summoned `implicit val Type[...]` that exist only to satisfy implicit search, and dropped a stale unused-import.
 
-**Note**: `reactivemongo-bson-api` is JVM-only, so Scala.js/Native not applicable
+**Result**: All 67 tests pass on both Scala 2.13 and Scala 3 under `-Xcheck-macros`.
 
 **Status**:
-- [ ] Create Scala 2 AnnotationSupport
-- [ ] Fix any Scala 2-specific macro issues
-- [ ] Update build.sbt
-- [ ] Add Scala 2 tests
-- [ ] Verify cross-compilation works
+- [x] Create Scala 2 AnnotationSupport
+- [x] Fix Scala 2-specific macro issues (path-dependent type leak, macro-bundle alias, `bson` package term)
+- [x] Update build.sbt
+- [x] Cross-compile shared test suite
+- [x] Verify cross-compilation works (67 tests on both)
 
 ---
 
