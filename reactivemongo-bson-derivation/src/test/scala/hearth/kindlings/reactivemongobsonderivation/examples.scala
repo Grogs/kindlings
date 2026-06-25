@@ -111,8 +111,7 @@ final case class OptionalGeneric[T](v: Int, opt: Option[T])
 final case class Foo[T](bar: T, lorem: String)
 final case class Bar(name: String, next: Option[Bar])
 
-type Items[A] = Seq[A]
-final case class GenSeq[A](items: Items[A], count: Int)
+final case class GenSeq[A](items: Seq[A], count: Int)
 
 final case class OverloadedApply(string: String)
 object OverloadedApply {

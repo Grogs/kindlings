@@ -213,7 +213,7 @@ lazy val aliases = new Aliases(
 
 lazy val reactivemongoBsonDerivation = projectMatrix
   .in(file("reactivemongo-bson-derivation"))
-  .someVariations(List(versions.scala3), List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
   .dependsOn(derivationCommons)
   .settings(
     moduleName := "kindlings-reactivemongo-bson-derivation",
