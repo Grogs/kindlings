@@ -22,13 +22,13 @@ Macros.reader[Foo]
 
 This is a friendly difference — users get default values out of the box.
 
-### 2. `@NoneAsNull` annotation not supported
+### 2. `@NoneAsNull` annotation
 
 **Reference**: An Option field annotated with `@NoneAsNull` writes `BSONNull` for `None`. Without it, `None` is omitted from the output.
 
 **Ours**: `@NoneAsNull` annotation supported. Option fields annotated with `@NoneAsNull` write `BSONNull` for `None`; unannotated ones are omitted (same as before).
 
-**Status**: **Done** (see task 8).
+**Status**: **Done** (matches reference).
 
 ### 3. `BSONNull` is always treated as `None` on read
 
@@ -120,17 +120,19 @@ This is a friendly difference — users get default values out of the box.
 
 ## Test Cases Worth Porting
 
-The following reference tests cover edge cases we should also test:
+The following reference tests cover edge cases we should also test. All are covered:
 
-1. **`Optional` field with `BSONNull` and missing** — covered (see `@NoneAsNull - explicit BSONNull` test)
-2. **Recursive structure** (e.g., `Tree`) — **SUPPORTED** (see task 7, `recursive structure (Tree)` test)
+1. **`Optional` field with `BSONNull` and missing** — covered (`@NoneAsNull - explicit BSONNull` test)
+2. **Recursive structure** (e.g., `Tree`) — covered (`recursive structure (Tree)` test)
 3. **Generic case class** (`GenSeq`) — ported using `GenSeq[Option[SingleBigDecimal]]`
-4. **Empty case class** — already covered
-5. **`@Key` / `@FieldName` annotation** — already covered
-6. **Sealed family with case objects** — already covered
+4. **Empty case class** — covered
+5. **`@Key` / `@FieldName` annotation** — covered
+6. **Sealed family with case objects** — covered
 7. **Custom field naming** (SnakeCase, PascalCase) — covered
 8. **Union types (ADT)** — partial coverage (sealed traits only; see limitation #6)
 9. **Self-reference** — covered (recursive structure test)
+10. **`@Ignore` skip** — covered (`@Ignore field is not serialized`)
+11. **Non-String map keys** — covered (`Map[Locale, String]`, `Map[UUID, Int]`)
 
 ### Recursive Structure Limitation (resolved)
 

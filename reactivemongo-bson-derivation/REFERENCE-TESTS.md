@@ -37,8 +37,11 @@ The following `MacroSpec` tests are covered by our test suite:
 | Default-value tests | `default values from Scala-level defaults`, `default values from @defaultValue annotation` | |
 | Map tests | `Map[String, Int]`, `Map with String keys` | |
 | `BSONObjectID` field | `support overriding keys with annotations` | Uses `BSONObjectID` |
-| `TypeNaming` tests | `FullName discriminator includes enclosing objects`, `Custom type naming transforms simple name` | New feature tests |
-| `@Flatten` nested test | `@Flatten works with nested flattening` | New feature test |
+| `@Ignore` field (`"skip ignored fields"`) | `@Ignore field is not serialized` | Uses `@Ignore`; value supplied by default on read, omitted from BSON on write |
+| Non-String map keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`) | `Map[Locale, String]`, `Map[UUID, Int]` | Sums `KeyReader`/`KeyWriter` for non-String keys |
+| `@DefaultValue` with `Option[Float]` (`WithDefaultValues2.score`) | `default values from @DefaultValue annotation` | Covariant `defaultValue` + `<:<` lookup |
+| `TypeNaming` tests | `FullName discriminator includes enclosing objects`, `Custom type naming transforms simple name`, `SimpleName discriminator survives nested sealed trait` | Default `FullName`; `SimpleName` opt-in |
+| `@Flatten` nested test | `@Flatten works with nested flattening`, `@Flatten merges inner case class fields into parent document` | Positive cases only |
 
 ## Reference tests not ported
 
@@ -77,9 +80,8 @@ behavior and the associated warning-suppression tests do not apply.
 
 ### `@Ignore` annotation (`"skip ignored fields"`)
 
-**Not ported.** We do not support the `@Ignore` annotation. Fields are always
-read/written. Users can achieve similar results by using `Option` with a default
-or by defining a custom reader/writer.
+**Ported** (`@Ignore field is not serialized`). An `@Ignore`d field is omitted
+from the written BSON and receives its default value (or null) on read.
 
 ### Case class with refinement type as field (`"handle case class with refinement type as field"`)
 
@@ -89,37 +91,35 @@ reproducing the custom implicit setup rather than testing our macro.
 
 ### Nested traits with full-name discriminator (`"support automatic implementations search with nested traits"`)
 
-**Not ported as-is.** These tests assume the reference's default `TypeNaming.FullName`.
-We default to `TypeNaming.SimpleName`. The same hierarchy behavior is covered by
-our sealed-trait tests; only the discriminator string differs.
+**Partially ported.** Both use `TypeNaming.FullName` as the default now (matching
+the reference). Covered by `FullName discriminator includes enclosing objects` and
+`SimpleName discriminator survives nested sealed trait` (opting into `SimpleName`).
 
 ### Specific annotation combinations
 
 - `@Flatten @Writer(...) @Reader(...)` on the same field (`"support @Reader & @Writer annotations"`)
   **Not ported.** Our current implementation does not support combining `@Flatten`
   with `@Reader`/`@Writer` on the same field. `@Flatten` takes precedence.
+- `@Ignore` combined with `@Reader`/`@Writer` on the same field: also not tested;
+  `@Ignore` short-circuits read and write before the custom handler is consulted.
 
 ### Strict BSONNull handling for Option (`"not support type mismatch for optional value"`, `"support null for optional value"` with strict semantics)
 
 **Not ported.** We always decode `BSONNull` as `None` and are more permissive
 than the reference (see `REFERENCE-COMPARISON.md` #3).
 
-### Maps with non-String keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`)
+### Notes on individual gaps
 
-**Ported.** Our map handler now summons `KeyReader[K]`/`KeyWriter[K]` for
-non-String key types. Tested with `java.util.Locale` and `java.util.UUID` keys.
-
-### `@DefaultValue` with `Option` literal (`WithDefaultValues2.score: Option[Float]`)
-
-**Ported.** Fixed by making `defaultValue[T]` covariant and using `<:<` for
-annotation lookup, so `@DefaultValue(Some(45.6f))` on an `Option[Float]` field
-is found and applied correctly.
+- **`FooVal`-as-`Map`-key with a custom `KeyReader`**: not ported (the reference
+  test `WithMap2[FooVal, String]` operates on a value class whose key codec we do
+  not pre-summon). Low priority; users can supply their own `KeyReader[FooVal]`.
 
 ## Coverage summary
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~22 top-level behaviors.
+- **Ported / adapted**: ~25 top-level behaviors (67 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
-  `@Ignore`, separate Reader/Writer derivation, strict `BSONNull` semantics).
+  separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
+- **Test suite**: 67 tests currently passing.
