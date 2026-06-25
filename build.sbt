@@ -1,40 +1,9 @@
-import sbtwelcome.UsefulTask
 import commandmatrix.extra.*
 import kubuszok.sbt._
 import kubuszok.sbt.KubuszokPlugin.autoImport._
 
-// Versions:
-
-val versions = new {
-  // Versions we are publishing for.
-  val scala213 = "2.13.18"
-  val scala3 = "3.8.3"
-
-  // Which versions should be cross-compiled for publishing.
-  val scalas = List(scala213, scala3)
-  val platforms = List(VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native)
-
-  // Dependencies.
-  val hearth = "0.3.0-49-g68e1781-SNAPSHOT"
-  val kindProjector = "0.13.4"
-  val avro = "1.12.1"
-  val avro4s213 = "4.1.2"
-  val avro4s3 = "5.0.15"
-  val cats = "2.13.0"
-  val circe = "0.14.15"
-  val iron = "3.3.1"
-  val jsoniterScala = "2.38.14"
-  val kittens = "3.5.0"
-  val pureconfig = "0.17.10"
-  val tapir = "1.13.19"
-  val refined = "0.11.3"
-  val scalacheck = "1.19.0"
-  val scalaJavaTime = "2.6.0"
-  val scalaSaxParser = "0.1.0"
-  val scalaYaml = "0.3.1"
-  val scalaXml = "2.4.0"
-  val sconfig = "1.12.4"
-}
+// Versions: see `project/Versions.scala` (the `versions` object lives in the meta-build so that its
+// members resolve under sbt 2.0 / Scala 3 — see the comment there).
 
 val dev = new DevProperties(
   scala213 = Some(versions.scala213),
@@ -78,6 +47,16 @@ val useCrossQuotes = versions.scalas.flatMap { scalaVersion =>
     )
   )
 }
+
+// On Scala Native, scalacheck 1.19.0 still depends on `test-interface_native0.5` 0.5.8 while the
+// rest of the build (hearth, scala-native 0.5.12) pulls 0.5.12; the two are binary-compatible but
+// sbt's strict eviction check fails the `update` task. Downgrade the eviction error to a warning on
+// the native rows only (JVM/JS keep the strict check).
+val nativeEvictionWarn = List(
+  MatrixAction
+    .ForPlatform(VirtualAxis.native)
+    .Configure(_.settings(evictionErrorLevel := Level.Warn))
+)
 
 val settings = Seq(
   scalacOptions ++= foldVersion(scalaVersion.value)(
@@ -156,8 +135,8 @@ val settings = Seq(
 
 val dependencies = Seq(
   libraryDependencies ++= Seq(
-    "com.kubuszok" %%% "hearth" % versions.hearth,
-    "com.kubuszok" %%% "hearth-munit" % versions.hearth % Test
+    "com.kubuszok" %% "hearth" % versions.hearth,
+    "com.kubuszok" %% "hearth-munit" % versions.hearth % Test
   ),
   libraryDependencies ++= foldVersion(scalaVersion.value)(
     for3 = Seq.empty,
@@ -214,13 +193,19 @@ lazy val aliases = new Aliases(
     ironIntegration,
     xmlDerivation,
     catsDerivation,
+    catsTaglessDerivation,
     scalacheckDerivation,
     catsIntegration,
     sconfigDerivation,
     diffDerivation,
     avroDerivation,
     pureconfigDerivation,
-    reactivemongoBsonDerivation
+    reactivemongoBsonDerivation,
+    di,
+    diCats,
+    mock,
+    tapirOpenapiJsoniter,
+    optics
   ),
   testOnly = Seq(integrationTests),
   compileOnly = Seq(benchmarks)
@@ -246,6 +231,38 @@ lazy val reactivemongoBsonDerivation = projectMatrix
     resolvers += Resolver.mavenLocal
   )
 
+// On sbt 2.0 sbt-welcome is gone, so the `ci-*` / `test-*` command aliases it used to register
+// (from `aliases.usefulTasks(...)`) are wired explicitly here. The CI workflow invokes
+// `sbt ci-<platform>-<scala>`; the local helper aliases mirror AGENTS.md (`test-jvm-2_13`, ...).
+//
+// IMPORTANT (sbt 2.0): `test` was redefined to *incremental* test (only re-runs suites whose
+// inputs changed), so on a fresh CI checkout `<module>/test` reports "No tests to run" and the
+// suites never execute. We therefore rewrite the `/test` tasks produced by `Aliases` to
+// `/testFull`, which always runs every suite. See the sbt 2.0 change summary ("test changed to
+// incremental test").
+lazy val commandAliases: Seq[Def.Setting[State => State]] = {
+  val combos = for {
+    platform <- Seq("jvm", "js", "native")
+    scala <- Seq("2_13", "3")
+  } yield (platform, scala)
+  val platformName = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native")
+  val scalaBinary = Map("2_13" -> "2.13", "3" -> "3")
+  def fullTests(commands: String): String = commands.replace("/test", "/testFull")
+  val perAxis = combos.flatMap { case (platform, scala) =>
+    val p = platformName(platform)
+    val s = scalaBinary(scala)
+    addCommandAlias(s"ci-$platform-$scala", fullTests(aliases.ci(p, s))) ++
+      addCommandAlias(s"test-$platform-$scala", fullTests(aliases.test(p, s)))
+  }
+  // `publish-local-for-tests` used to be registered by sbt-welcome's `usefulTasks`. sbt-welcome has
+  // no sbt-2.0 build, so re-register it here: `docs/Justfile` (`just test-snippets`, run in CI)
+  // calls `sbt --client "publish-local-for-tests"` to publishLocal every JVM 2.13 + 3 artifact
+  // before running the documentation snippets.
+  val publishLocalForTests =
+    addCommandAlias("publish-local-for-tests", aliases.publishLocalForTests((_, platform) => platform == "JVM"))
+  perAxis ++ publishLocalForTests
+}
+
 lazy val root = project
   .in(file("."))
   .settings(settings)
@@ -267,40 +284,31 @@ lazy val root = project
   .aggregate(ironIntegration.projectRefs *)
   .aggregate(xmlDerivation.projectRefs *)
   .aggregate(catsDerivation.projectRefs *)
+  .aggregate(catsTaglessDerivation.projectRefs *)
   .aggregate(scalacheckDerivation.projectRefs *)
   .aggregate(catsIntegration.projectRefs *)
   .aggregate(reactivemongoBsonDerivation.projectRefs *)
   .aggregate(diffDerivation.projectRefs *)
+  .aggregate(di.projectRefs *)
+  .aggregate(diCats.projectRefs *)
+  .aggregate(mock.projectRefs *)
+  .aggregate(optics.projectRefs *)
+  .aggregate(tapirOpenapiJsoniter.projectRefs *)
   .aggregate(integrationTests.projectRefs *)
   .aggregate(benchmarks.projectRefs *)
   .settings(
     moduleName := "kindlings",
     name := "kindlings",
-    description := "Build setup for Kindlings modules",
-    logo :=
-      s"""Kindlings ${(version).value} build for (${versions.scala213}, ${versions.scala3}) x (Scala JVM, Scala.js $scalaJSVersion, Scala Native $nativeVersion)
-         |
-         |This build uses sbt-projectmatrix with sbt-commandmatrix helper:
-         | - Scala JVM adds no suffix to a project name seen in build.sbt
-         | - Scala.js adds the "JS" suffix to a project name seen in build.sbt
-         | - Scala Native adds the "Native" suffix to a project name seen in build.sbt
-         | - Scala 2.13 adds no suffix to a project name seen in build.sbt
-         | - Scala 3 adds the suffix "3" to a project name seen in build.sbt
-         |
-         |When working with IntelliJ or Scala Metals, edit dev.properties to control which Scala version you're currently working with.
-         |""".stripMargin,
-    usefulTasks := aliases.usefulTasks(
-      publishLocalForTestsFilter = Some((_, platform) => platform == "JVM"),
-      publishLocalForTestsDescription =
-        "Publishes all Scala 2.13 and Scala 3 JVM artifacts to test snippets in documentation"
-    )
+    description := "Build setup for Kindlings modules"
   )
+  .settings(commandAliases *)
 
 lazy val diffDerivation = projectMatrix
   .in(file("diff-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-diff-derivation",
     name := "kindlings-diff-derivation",
@@ -310,11 +318,125 @@ lazy val diffDerivation = projectMatrix
   .settings(dependencies *)
   .settings(publishSettings *)
 
+lazy val di = projectMatrix
+  .in(file("di"))
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
+  .settings(
+    moduleName := "kindlings-di",
+    name := "kindlings-di",
+    description := "Compile-time dependency injection (macwire-style) using Hearth's enclosingScope"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+  .settings(
+    libraryDependencies += "com.softwaremill.common" %% "tagging" % versions.tagging
+  )
+
+lazy val diCats = projectMatrix
+  .in(file("di-cats"))
+  // JVM + JS only: cats-effect for Scala Native 0.5 is published from 3.7.0+, but we pin 3.6.3 (which has no
+  // `cats-effect_native0.5_3` artifact). Add `VirtualAxis.native` here once the cats-effect pin moves to >= 3.7.0.
+  .someVariations(versions.scalas, List(VirtualAxis.jvm, VirtualAxis.js))((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .dependsOn(di)
+  .settings(
+    moduleName := "kindlings-di-cats",
+    name := "kindlings-di-cats",
+    description := "F-agnostic Cats-Effect Resource[F, _] dependency injection wiring using Hearth"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.typelevel" %% "cats-effect" % versions.catsEffect
+    )
+  )
+
+lazy val optics = projectMatrix
+  .in(file("optics"))
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
+  // cats-integration is a TEST dependency only: its `IsCollection`/`IsMap` providers are loaded from the classpath by
+  // `loadStandardExtensions`, demonstrating that `.each` lights up over cats `NonEmpty*` purely because the provider
+  // jar is present — no optics-specific cats code (see `CatsEachSpec`).
+  .dependsOn(catsIntegration % Test)
+  .settings(
+    moduleName := "kindlings-optics",
+    name := "kindlings-optics",
+    description := "Quicklens-style optics/lenses (modify/setTo) reimplemented using Hearth"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+
+lazy val mock = projectMatrix
+  .in(file("mock"))
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
+  .settings(
+    moduleName := "kindlings-mock",
+    name := "kindlings-mock",
+    description := "Pure-macro mocking framework (scalamock-style) using Hearth's AnonymousInstance"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+
+// The pure jsoniter codecs for the sttp-apispec OpenAPI model are cross-platform (JVM/JS/Native).
+// The production tapir bridge (endpoints -> OpenAPI -> jsoniter JSON, circe-free) depends on
+// `tapir-openapi-docs`, which is published for JVM + JS but NOT Scala Native; it is compiled from an
+// extra `src/main/scala-tapir` source directory on those two platforms only. `openapi-circe` /
+// `tapir-json-circe` (the test-only circe cross-check) are JVM-only.
+val tapirOpenapiJsoniterPlatformDeps =
+  List(VirtualAxis.jvm, VirtualAxis.js).map { platform =>
+    MatrixAction.ForPlatform(platform).Configure { project =>
+      project.settings(
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-openapi-docs" % versions.tapir,
+        Compile / unmanagedSourceDirectories += (Compile / sourceDirectory).value / "scala-tapir"
+      )
+    }
+  } ++ List(
+    MatrixAction.ForPlatform(VirtualAxis.jvm).Configure { project =>
+      project.settings(
+        libraryDependencies ++= Seq(
+          "com.softwaremill.sttp.tapir" %% "tapir-json-circe" % versions.tapir % Test,
+          "com.softwaremill.sttp.apispec" %% "openapi-circe" % versions.sttpApispec % Test
+        )
+      )
+    }
+  )
+
+lazy val tapirOpenapiJsoniter = projectMatrix
+  .in(file("tapir-openapi-jsoniter"))
+  .someVariations(versions.scalas, versions.platforms)(
+    (dev.only1VersionInIDE ++ tapirOpenapiJsoniterPlatformDeps ++ nativeEvictionWarn) *
+  )
+  .dependsOn(jsoniterJson, jsoniterDerivation)
+  .settings(
+    moduleName := "kindlings-tapir-openapi-jsoniter",
+    name := "kindlings-tapir-openapi-jsoniter",
+    description := "Circe-free jsoniter-scala serialization of tapir-generated OpenAPI (sttp-apispec model)"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+  .settings(
+    libraryDependencies ++= Seq(
+      "com.softwaremill.sttp.apispec" %% "openapi-model" % versions.sttpApispec
+    )
+  )
+
 lazy val fastShowPretty = projectMatrix
   .in(file("fast-show-pretty"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-fast-show-pretty",
     name := "kindlings-fast-show-pretty",
@@ -326,9 +448,10 @@ lazy val fastShowPretty = projectMatrix
 
 lazy val circeDerivation = projectMatrix
   .in(file("circe-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons, jsonSchemaConfigMacroProviders)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-circe-derivation",
     name := "kindlings-circe-derivation",
@@ -340,16 +463,17 @@ lazy val circeDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "io.circe" %%% "circe-core" % versions.circe,
-      "io.circe" %%% "circe-parser" % versions.circe % Test
+      "io.circe" %% "circe-core" % versions.circe,
+      "io.circe" %% "circe-parser" % versions.circe % Test
     )
   )
 
 lazy val jsoniterDerivation = projectMatrix
   .in(file("jsoniter-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons, jsonSchemaConfigMacroProviders)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-jsoniter-derivation",
     name := "kindlings-jsoniter-derivation",
@@ -361,7 +485,7 @@ lazy val jsoniterDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-core" % versions.jsoniterScala
+      "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala
     )
   )
   .settings(
@@ -377,8 +501,7 @@ lazy val jsoniterDerivation = projectMatrix
 
 lazy val jsoniterJson = projectMatrix
   .in(file("jsoniter-json"))
-  .someVariations(versions.scalas, versions.platforms)(dev.only1VersionInIDE *)
-  .disablePlugins(WelcomePlugin)
+  .someVariations(versions.scalas, versions.platforms)((dev.only1VersionInIDE ++ nativeEvictionWarn) *)
   .settings(
     moduleName := "kindlings-jsoniter-json",
     name := "kindlings-jsoniter-json",
@@ -388,8 +511,8 @@ lazy val jsoniterJson = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-core" % versions.jsoniterScala,
-      "com.kubuszok" %%% "hearth-munit" % versions.hearth % Test
+      "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala,
+      "com.kubuszok" %% "hearth-munit" % versions.hearth % Test
     ),
     libraryDependencies ++= foldVersion(scalaVersion.value)(
       for3 = Seq.empty,
@@ -402,9 +525,10 @@ lazy val jsoniterJson = projectMatrix
 
 lazy val ubjsonDerivation = projectMatrix
   .in(file("ubjson-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-ubjson-derivation",
     name := "kindlings-ubjson-derivation",
@@ -416,9 +540,10 @@ lazy val ubjsonDerivation = projectMatrix
 
 lazy val yamlDerivation = projectMatrix
   .in(file("yaml-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-yaml-derivation",
     name := "kindlings-yaml-derivation",
@@ -429,15 +554,16 @@ lazy val yamlDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "org.virtuslab" %%% "scala-yaml" % versions.scalaYaml
+      "org.virtuslab" %% "scala-yaml" % versions.scalaYaml
     )
   )
 
 lazy val xmlDerivation = projectMatrix
   .in(file("xml-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-xml-derivation",
     name := "kindlings-xml-derivation",
@@ -448,8 +574,8 @@ lazy val xmlDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "org.scala-lang.modules" %%% "scala-xml" % versions.scalaXml,
-      "com.kubuszok" %%% "scala-sax-parser" % versions.scalaSaxParser
+      "org.scala-lang.modules" %% "scala-xml" % versions.scalaXml,
+      "com.kubuszok" %% "scala-sax-parser" % versions.scalaSaxParser
     )
   )
 
@@ -457,7 +583,6 @@ lazy val avroDerivation = projectMatrix
   .in(file("avro-derivation"))
   .someVariations(versions.scalas, List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-avro-derivation",
     name := "kindlings-avro-derivation",
@@ -476,7 +601,6 @@ lazy val pureconfigDerivation = projectMatrix
   .in(file("pureconfig-derivation"))
   .someVariations(versions.scalas, List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-pureconfig-derivation",
     name := "kindlings-pureconfig-derivation",
@@ -499,14 +623,14 @@ val sconfigJavaTimePolyfill = List(
     .ForPlatform(VirtualAxis.js)
     .Configure(
       _.settings(
-        libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % versions.scalaJavaTime % Test
+        libraryDependencies += "io.github.cquiroz" %% "scala-java-time" % versions.scalaJavaTime % Test
       )
     ),
   MatrixAction
     .ForPlatform(VirtualAxis.native)
     .Configure(
       _.settings(
-        libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % versions.scalaJavaTime % Test
+        libraryDependencies += "io.github.cquiroz" %% "scala-java-time" % versions.scalaJavaTime % Test
       )
     )
 )
@@ -514,10 +638,9 @@ val sconfigJavaTimePolyfill = List(
 lazy val sconfigDerivation = projectMatrix
   .in(file("sconfig-derivation"))
   .someVariations(versions.scalas, versions.platforms)(
-    (useCrossQuotes ++ dev.only1VersionInIDE ++ sconfigJavaTimePolyfill) *
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ sconfigJavaTimePolyfill ++ nativeEvictionWarn) *
   )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-sconfig-derivation",
     name := "kindlings-sconfig-derivation",
@@ -528,14 +651,15 @@ lazy val sconfigDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "org.ekrich" %%% "sconfig" % versions.sconfig
+      "org.ekrich" %% "sconfig" % versions.sconfig
     )
   )
 
 lazy val derivationCommons = projectMatrix
   .in(file("derivation-commons"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
-  .disablePlugins(WelcomePlugin)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .settings(
     moduleName := "kindlings-derivation-commons",
     name := "kindlings-derivation-commons",
@@ -547,8 +671,9 @@ lazy val derivationCommons = projectMatrix
 
 lazy val jsonSchemaConfigMacroProviders = projectMatrix
   .in(file("json-schema-config-macro-providers"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
-  .disablePlugins(WelcomePlugin)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .settings(
     moduleName := "kindlings-json-schema-config-macro-providers",
     name := "kindlings-json-schema-config-macro-providers",
@@ -560,9 +685,10 @@ lazy val jsonSchemaConfigMacroProviders = projectMatrix
 
 lazy val tapirSchemaDerivation = projectMatrix
   .in(file("tapir-schema-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons, jsonSchemaConfigMacroProviders)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-tapir-schema-derivation",
     name := "kindlings-tapir-schema-derivation",
@@ -573,19 +699,23 @@ lazy val tapirSchemaDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "com.softwaremill.sttp.tapir" %%% "tapir-core" % versions.tapir,
-      "io.circe" %%% "circe-core" % versions.circe % Test,
-      "io.circe" %%% "circe-parser" % versions.circe % Test,
-      "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-core" % versions.jsoniterScala % Test
+      "com.softwaremill.sttp.tapir" %% "tapir-core" % versions.tapir,
+      "io.circe" %% "circe-core" % versions.circe % Test,
+      "io.circe" %% "circe-parser" % versions.circe % Test,
+      "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala % Test
     )
   )
   .dependsOn(circeDerivation % Test)
   .dependsOn(jsoniterDerivation % Test)
+  .settings(
+    Test / scalacOptions += "-Xmacro-settings:tapirSchemaDerivation.preferConfig=circe"
+  )
 
 lazy val refinedIntegration = projectMatrix
   .in(file("refined-integration"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
-  .disablePlugins(WelcomePlugin)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .settings(
     moduleName := "kindlings-refined-integration",
     name := "kindlings-refined-integration",
@@ -595,12 +725,13 @@ lazy val refinedIntegration = projectMatrix
   .settings(settings *)
   .settings(dependencies *)
   .settings(publishSettings *)
-  .settings(libraryDependencies += "eu.timepit" %%% "refined" % versions.refined)
+  .settings(libraryDependencies += "eu.timepit" %% "refined" % versions.refined)
 
 lazy val ironIntegration = projectMatrix
   .in(file("iron-integration"))
-  .someVariations(List(versions.scala3), versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
-  .disablePlugins(WelcomePlugin)
+  .someVariations(List(versions.scala3), versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .settings(
     moduleName := "kindlings-iron-integration",
     name := "kindlings-iron-integration",
@@ -610,13 +741,14 @@ lazy val ironIntegration = projectMatrix
   .settings(settings *)
   .settings(dependencies *)
   .settings(publishSettings *)
-  .settings(libraryDependencies += "io.github.iltotore" %%% "iron" % versions.iron)
+  .settings(libraryDependencies += "io.github.iltotore" %% "iron" % versions.iron)
 
 lazy val catsDerivation = projectMatrix
   .in(file("cats-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-cats-derivation",
     name := "kindlings-cats-derivation",
@@ -627,17 +759,38 @@ lazy val catsDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "org.typelevel" %%% "cats-core" % versions.cats,
-      "org.typelevel" %%% "alleycats-core" % versions.cats,
-      "org.scalacheck" %%% "scalacheck" % versions.scalacheck % Test
+      "org.typelevel" %% "cats-core" % versions.cats,
+      "org.typelevel" %% "alleycats-core" % versions.cats,
+      "org.scalacheck" %% "scalacheck" % versions.scalacheck % Test
+    )
+  )
+
+lazy val catsTaglessDerivation = projectMatrix
+  .in(file("cats-tagless-derivation"))
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
+  .dependsOn(derivationCommons)
+  .settings(
+    moduleName := "kindlings-cats-tagless-derivation",
+    name := "kindlings-cats-tagless-derivation",
+    description := "Cats-tagless FunctorK/InvariantK/ContravariantK derivation using Hearth macros"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.typelevel" %% "cats-tagless-core" % versions.catsTagless
     )
   )
 
 lazy val scalacheckDerivation = projectMatrix
   .in(file("scalacheck-derivation"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .dependsOn(derivationCommons)
-  .disablePlugins(WelcomePlugin)
   .settings(
     moduleName := "kindlings-scalacheck-derivation",
     name := "kindlings-scalacheck-derivation",
@@ -648,14 +801,15 @@ lazy val scalacheckDerivation = projectMatrix
   .settings(publishSettings *)
   .settings(
     libraryDependencies ++= Seq(
-      "org.scalacheck" %%% "scalacheck" % versions.scalacheck
+      "org.scalacheck" %% "scalacheck" % versions.scalacheck
     )
   )
 
 lazy val catsIntegration = projectMatrix
   .in(file("cats-integration"))
-  .someVariations(versions.scalas, versions.platforms)((useCrossQuotes ++ dev.only1VersionInIDE) *)
-  .disablePlugins(WelcomePlugin)
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
   .settings(
     moduleName := "kindlings-cats-integration",
     name := "kindlings-cats-integration",
@@ -665,7 +819,7 @@ lazy val catsIntegration = projectMatrix
   .settings(settings *)
   .settings(dependencies *)
   .settings(publishSettings *)
-  .settings(libraryDependencies += "org.typelevel" %%% "cats-core" % versions.cats)
+  .settings(libraryDependencies += "org.typelevel" %% "cats-core" % versions.cats)
 
 // Iron dependency added conditionally for Scala 3 only (ironIntegration has no Scala 2.13 rows)
 // Avro and PureConfig are JVM-only — add as conditional deps for integration tests
@@ -696,9 +850,8 @@ val ironDepForScala3 = List(
 lazy val integrationTests = projectMatrix
   .in(file("integration-tests"))
   .someVariations(versions.scalas, versions.platforms)(
-    (useCrossQuotes ++ dev.only1VersionInIDE ++ ironDepForScala3 ++ jvmOnlyDerivatonsForIntegrationTests) *
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ ironDepForScala3 ++ jvmOnlyDerivatonsForIntegrationTests ++ nativeEvictionWarn) *
   )
-  .disablePlugins(WelcomePlugin)
   .dependsOn(
     fastShowPretty,
     circeDerivation,
@@ -716,19 +869,19 @@ lazy val integrationTests = projectMatrix
   .settings(dependencies *)
   .settings(
     libraryDependencies ++= Seq(
-      "eu.timepit" %%% "refined" % versions.refined,
-      "io.circe" %%% "circe-core" % versions.circe,
-      "io.circe" %%% "circe-parser" % versions.circe,
-      "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-core" % versions.jsoniterScala,
-      "org.virtuslab" %%% "scala-yaml" % versions.scalaYaml,
-      "com.softwaremill.sttp.tapir" %%% "tapir-core" % versions.tapir,
-      "org.scala-lang.modules" %%% "scala-xml" % versions.scalaXml,
-      "com.kubuszok" %%% "scala-sax-parser" % versions.scalaSaxParser,
-      "org.typelevel" %%% "cats-core" % versions.cats,
-      "org.ekrich" %%% "sconfig" % versions.sconfig
+      "eu.timepit" %% "refined" % versions.refined,
+      "io.circe" %% "circe-core" % versions.circe,
+      "io.circe" %% "circe-parser" % versions.circe,
+      "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala,
+      "org.virtuslab" %% "scala-yaml" % versions.scalaYaml,
+      "com.softwaremill.sttp.tapir" %% "tapir-core" % versions.tapir,
+      "org.scala-lang.modules" %% "scala-xml" % versions.scalaXml,
+      "com.kubuszok" %% "scala-sax-parser" % versions.scalaSaxParser,
+      "org.typelevel" %% "cats-core" % versions.cats,
+      "org.ekrich" %% "sconfig" % versions.sconfig
     ),
     libraryDependencies ++= foldVersion(scalaVersion.value)(
-      for3 = Seq("io.github.iltotore" %%% "iron" % versions.iron),
+      for3 = Seq("io.github.iltotore" %% "iron" % versions.iron),
       for2_13 = Seq.empty
     )
   )
@@ -749,9 +902,10 @@ lazy val benchmarks = projectMatrix
     avroDerivation,
     pureconfigDerivation,
     sconfigDerivation,
-    tapirSchemaDerivation
+    tapirSchemaDerivation,
+    optics,
+    tapirOpenapiJsoniter
   )
-  .disablePlugins(WelcomePlugin)
   .settings(noPublishSettings *)
   .settings(settings *)
   .settings(
@@ -765,6 +919,10 @@ lazy val benchmarks = projectMatrix
       "io.circe" %% "circe-generic" % versions.circe,
       "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % versions.jsoniterScala % Provided,
       "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-circe" % versions.jsoniterScala,
+      // optics baseline: SoftwareMill quicklens (which kindlings-optics reimplements)
+      "com.softwaremill.quicklens" %% "quicklens" % versions.quicklens,
+      // tapir-openapi-jsoniter baseline: sttp-apispec's circe codecs (which the module avoids depending on)
+      "com.softwaremill.sttp.apispec" %% "openapi-circe" % versions.sttpApispec,
       "org.typelevel" %% "kittens" % versions.kittens,
       "com.sksamuel.avro4s" %% "avro4s-core" % (if (scalaBinaryVersion.value == "3") versions.avro4s3
                                                 else versions.avro4s213)

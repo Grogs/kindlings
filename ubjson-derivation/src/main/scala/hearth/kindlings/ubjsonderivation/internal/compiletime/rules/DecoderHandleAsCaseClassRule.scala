@@ -38,7 +38,7 @@ trait DecoderHandleAsCaseClassRuleImpl {
       implicit val transientFieldT: Type[transientField] = CTypes.TransientField
 
       val constructor = caseClass.primaryConstructor
-      val fieldsList = constructor.parameters.flatten.toList
+      val fieldsList = constructor.totalParameters.flatten.toList
 
       // Validate: @transientField on fields without defaults
       fieldsList
@@ -84,14 +84,12 @@ trait DecoderHandleAsCaseClassRuleImpl {
           val transientDefaults: Map[String, Expr_??] = fieldsList
             .filter { case (_, p) => hasAnnotationType[transientField](p) }
             .flatMap { case (fName, param) =>
-              param.defaultValue.flatMap { existentialOuter =>
-                val methodOf = existentialOuter.value
-                methodOf.value match {
-                  case noInstance: Method.NoInstance[?] =>
-                    import noInstance.Returned
-                    noInstance(Map.empty).toOption.map(expr => (fName, expr.as_??))
-                  case _ => None
-                }
+              param.defaultValue.flatMap { method =>
+                foldInstanceFree(method, "Default value")(
+                  onTypes = _ => Map.empty,
+                  onValues = _ => Map.empty
+                ).toOption
+                  .map(expr => (fName, expr))
               }
             }
             .toMap
@@ -182,14 +180,12 @@ trait DecoderHandleAsCaseClassRuleImpl {
 
                         if (param.hasDefault) {
                           param.defaultValue
-                            .flatMap { existentialOuter =>
-                              val methodOf = existentialOuter.value
-                              methodOf.value match {
-                                case noInstance: Method.NoInstance[?] =>
-                                  import noInstance.Returned
-                                  noInstance(Map.empty).toOption.map(_.upcast[Any])
-                                case _ => None
-                              }
+                            .flatMap { method =>
+                              foldInstanceFree(method, "Default value")(
+                                onTypes = _ => Map.empty,
+                                onValues = _ => Map.empty
+                              ).toOption
+                                .map { ee => import ee.Underlying; ee.value.upcast[Any] }
                             }
                             .foreach { defaultExpr =>
                               initSteps += Expr.quote {
@@ -233,14 +229,12 @@ trait DecoderHandleAsCaseClassRuleImpl {
                         }
                         if (isCollOrMapField && param.hasDefault) {
                           param.defaultValue
-                            .flatMap { existentialOuter =>
-                              val methodOf = existentialOuter.value
-                              methodOf.value match {
-                                case noInstance: Method.NoInstance[?] =>
-                                  import noInstance.Returned
-                                  noInstance(Map.empty).toOption.map(_.upcast[Any])
-                                case _ => None
-                              }
+                            .flatMap { method =>
+                              foldInstanceFree(method, "Default value")(
+                                onTypes = _ => Map.empty,
+                                onValues = _ => Map.empty
+                              ).toOption
+                                .map { ee => import ee.Underlying; ee.value.upcast[Any] }
                             }
                             .foreach { defaultExpr =>
                               initSteps += Expr.quote {
@@ -267,12 +261,15 @@ trait DecoderHandleAsCaseClassRuleImpl {
                   val nonTransientFieldMap: Map[String, Expr_??] =
                     fieldDataList.map(_._4(decodedValuesExpr)).toMap
                   val fieldMap = nonTransientFieldMap ++ transientDefaults
-                  caseClass.primaryConstructor(fieldMap) match {
+                  foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                    onTypes = _ => Map.empty,
+                    onValues = _ => fieldMap
+                  ) match {
                     case Right(constructExpr) =>
                       MIO.pure(Expr.quote {
                         Expr.splice(requireCheckAll)
                         Expr.splice(transientInitAll)
-                        Expr.splice(constructExpr)
+                        Expr.splice(constructExpr.value.asInstanceOf[Expr[A]])
                       })
                     case Left(error) =>
                       val err =
@@ -399,7 +396,7 @@ trait DecoderHandleAsCaseClassRuleImpl {
       implicit val transientFieldT: Type[transientField] = CTypes.TransientField
 
       val constructor = caseClass.primaryConstructor
-      val fieldsList = constructor.parameters.flatten.toList
+      val fieldsList = constructor.totalParameters.flatten.toList
 
       fieldsList
         .collectFirst {
@@ -447,14 +444,12 @@ trait DecoderHandleAsCaseClassRuleImpl {
           val transientDefaults: Map[String, Expr_??] = fieldsList
             .filter { case (_, p) => hasAnnotationType[transientField](p) }
             .flatMap { case (fName, param) =>
-              param.defaultValue.flatMap { existentialOuter =>
-                val methodOf = existentialOuter.value
-                methodOf.value match {
-                  case noInstance: Method.NoInstance[?] =>
-                    import noInstance.Returned
-                    noInstance(Map.empty).toOption.map(expr => (fName, expr.as_??))
-                  case _ => None
-                }
+              param.defaultValue.flatMap { method =>
+                foldInstanceFree(method, "Default value")(
+                  onTypes = _ => Map.empty,
+                  onValues = _ => Map.empty
+                ).toOption
+                  .map(expr => (fName, expr))
               }
             }
             .toMap
@@ -488,8 +483,11 @@ trait DecoderHandleAsCaseClassRuleImpl {
                   val nonTransientFieldMap: Map[String, Expr_??] =
                     fieldDataList.map(_._4(decodedValuesExpr)).toMap
                   val fieldMap = nonTransientFieldMap ++ transientDefaults
-                  caseClass.primaryConstructor(fieldMap) match {
-                    case Right(constructExpr) => MIO.pure(constructExpr)
+                  foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                    onTypes = _ => Map.empty,
+                    onValues = _ => fieldMap
+                  ) match {
+                    case Right(constructExpr) => MIO.pure(constructExpr.value.asInstanceOf[Expr[A]])
                     case Left(error)          =>
                       val err =
                         CodecDerivationError.CannotConstructType(Type[A].prettyPrint, isSingleton = false, Some(error))

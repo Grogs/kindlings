@@ -528,6 +528,117 @@ Fixed via `MLocal.unsafeSharedParallel`: branch B sees branch A's cache writes, 
 
 On older Hearth versions, use `.traverse` (sequential) instead.
 
+### 35. `classOf[M]` is impossible for an abstract macro type parameter
+
+**Severity: HIGH | Platform: Both**
+
+You cannot write `classOf[M]` (nor `helper[M]` with a `ClassTag` context bound) for an
+abstract macro type parameter `M` — the quote body is type-checked at macro-DEFINITION time,
+where `M` is abstract → "class type required but M found" (Scala 2) / "M is not a class type"
+(Scala 3). Hearth's `ClassExprCodec` is **asymmetric** and does not save you: it reifies
+`classOf[${Type[M]}]` from the type on Scala 2 but **value-lifts** on Scala 3 (so passing a
+dummy `classOf[Any]` emits `Object` for every key).
+
+**Fix:** summon `ClassTag[M]` at macro-EXECUTION time (where `M` is the concrete member type)
+and read its `runtimeClass` — fully cross-platform:
+
+```scala
+implicit val ct: Type[scala.reflect.ClassTag[M]] = Type.of[scala.reflect.ClassTag[M]]
+Expr.summonImplicit[scala.reflect.ClassTag[M]].toOption match {
+  case Some(classTag) => Expr.quote { Expr.splice(classTag).runtimeClass /* ... */ }
+  case None           => /* skip — should not happen for a concrete type */
+}
+```
+
+**Reference:** di `WiringMacrosImpl.consWiredEntry` (the `wiredInModule` registry keys).
+
+### 36. `Class` is shadowed by Hearth's cake `Class[A]` inside macro code
+
+**Severity: MEDIUM | Platform: Both**
+
+Inside a `MacroCommons` macro, the unqualified `Class` refers to Hearth's cake type
+`Class[A]` (used as `new Class[T]()`), NOT `java.lang.Class`. Generated code that needs the
+JVM class must say `java.lang.Class` explicitly, or you get confusing
+"found `WiringMacrosImpl.this.Class[_]`, required `Class[_]`" errors. Also prefer
+`java.lang.Class[Any]` over `java.lang.Class[?]` to avoid existential-type warnings in quotes.
+
+**Reference:** di `Wired.scala` / `WiringMacrosImpl.consWiredEntry`.
+
+### 37. `@compileTimeOnly` fires on the Scala 3 `extension` but not the Scala 2 `implicit class`
+
+**Severity: MEDIUM | Platform: Scala 2**
+
+A marker method carrying `@scala.annotation.compileTimeOnly(...)` is compile-rejected when
+used out of context on Scala 3 (as an `extension`), but on Scala 2 (as an `implicit class`
+method) the annotation does NOT reliably fire — the call compiles and only `sys.error`s at
+runtime. So: keep `@compileTimeOnly` + a `sys.error` body on markers (defense in depth), but
+do NOT assert the compile-time rejection message in a cross-platform test.
+
+**Reference:** optics `syntax.scala` markers; `ErrorMessagesSpec` (the dropped over-claiming test).
+
+### 38. Marker DSLs need INVARIANT evidence to pin element types (Scala 2 widening)
+
+**Severity: HIGH | Platform: Scala 2**
+
+A path-DSL marker typed on a bare covariant container — `extension [F[_], A](fa: F[A]) def each: A`
+— lets Scala 2 widen `List[Int].each` to `A = Any` (since `List[Int] <: List[Any]`), so the
+path's leaf type is lost. Pin the element/index/branch type with an **invariantly-parameterised
+evidence on the exact container type** (`IsElementOf.Aux[C, A]`, `IsIndexedElementOf`,
+`IsSingleElementOf`, `IsEither`). The evidence is **materialized by a macro** that consults
+Hearth's `IsCollection`/`IsMap`/`IsOption`/`IsEither` SPI — a **whitebox** macro on Scala 2
+(`val c: whitebox.Context` on the bundle, so it may return the refined `Aux[C, …]`) and a
+`transparent inline given` on Scala 3 — so adding a new provider on the classpath turns the
+step on with no extra module. On Scala 2 the refined `Aux` is then projected into the ops
+class' type params via an implicit *conversion* (`toEachOps[C](c)(implicit ev): EachOps[C,
+ev.Elem]`); an `implicit class` can't infer a class type param from a whitebox expansion. See
+[hearth-expr-parsing-dsl](../hearth-expr-parsing-dsl/SKILL.md) §3.
+
+**Reference:** optics per-platform `IsElementOf.scala` / `PathStepEvidences.scala` (the
+evidence macros), shared `PathStepEvidence.scala` (their common marker supertype),
+`internal/compiletime/ModifyMacrosImpl.scala` (`deriveIsElementOf` and friends).
+
+### 39. Scala 3 context-function values are eta-applied in tests (storing `B ?=> C`)
+
+**Severity: MEDIUM | Platform: Scala 3 (test code)**
+
+A value of context-function type `Config ?=> String` is **eta-applied** wherever a `given Config`
+is resolvable — even passing it to an `Any` parameter, and even when the `given` is *forward*
+referenced later in the block. So `returning(builtCf)` stores the applied `String`, not the
+function. To stash the function itself, type it as a plain `Config => String` (regular functions
+are not auto-applied; identical `scala.Function1` at runtime) and apply explicitly with
+`m.build("k")(using cfg)`. (This is a test-authoring trap, not a Hearth bug.)
+
+**Reference:** mock `MockScala3Spec` context-function test.
+
+### 40. Gate Scala 3 DSL markers behind a phantom context function — peel it with `betaReduce` + unwrap the `Block`
+
+**Severity: MEDIUM | Platform: Scala 3**
+
+To make path-DSL markers (`.each`/`.at`/`.when`/…) resolve **only inside** `modify` (so they don't
+pollute IDE completion on every collection value), take the path as a **context function**
+`OpticsContext ?=> (S => A)` and require each marker `(using OpticsContext)`. The `?=>` injects a
+`given OpticsContext` for the path body only; `OpticsContext` is a `sealed trait` with no public
+instance/given, so outside `modify` the markers fail with "No given instance of type OpticsContext".
+A plain lambda `_.a.b` is auto-wrapped into the context function by the expected type, so call sites
+are unchanged. Make `OpticsContext extends PathStepEvidence` so the synthesized `using` arg is
+dropped by the same evidence-stripping the other markers use.
+
+The macro must **peel** the `OpticsContext` layer before parsing, and there are two traps:
+- `Expr.betaReduce('{ $path(using null.asInstanceOf[OpticsContext]) })` reduces the application but
+  lands a **`Block` that binds the throwaway arg to a `val`** (`{ val ctx$1 = null; <lambda> }`).
+  `DestructuredExpr.parse` only accepts a bare lambda, so strip that wrapper block.
+- But a lambda is itself encoded as `Block(List(DefDef($anonfun)), Closure)` — naively recursing
+  into every `Block`'s result expr lands on the bare `Closure` and loses the `DefDef`
+  (`<non-destructurable: $anonfun>`). Stop unwrapping at `Block(List(_: DefDef), _: Closure)`; only
+  strip the binding block. The peeled lambda still references the dropped `val` in its marker
+  evidence positions, but those args are `OpticsContext`-typed and the parser discards them.
+
+Scala 2 has no context functions, so this is Scala-3-only; the Scala 2 markers stay gated by
+`@compileTimeOnly` + the implicit-conversion projection (pitfall #38).
+
+**Reference:** optics `OpticsContext.scala`, scala-3 `syntax.scala` markers, scala-3
+`internal/compiletime/ModifyMacros.scala` `peelContext`.
+
 ---
 
 ## Resolved Hearth issues (for context only)

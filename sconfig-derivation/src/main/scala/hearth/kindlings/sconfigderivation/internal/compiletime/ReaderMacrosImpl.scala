@@ -10,6 +10,7 @@ import org.ekrich.config.ConfigValue
 
 trait ReaderMacrosImpl
     extends SconfigDerivationTimeout
+    with hearth.kindlings.derivation.compiletime.MethodFolds
     with rules.ReaderUseCachedDefWhenAvailableRuleImpl
     with rules.ReaderUseImplicitWhenAvailableRuleImpl
     with rules.ReaderHandleAsValueTypeRuleImpl
@@ -241,7 +242,8 @@ trait ReaderMacrosImpl
           ReaderUseImplicitWhenAvailableRule,
           ReaderHandleAsValueTypeRule,
           ReaderHandleAsOptionRule,
-          ReaderHandleAsMapRule,
+          // ReaderHandleAsMapRule is merged into ReaderHandleAsCollectionRule: a map is an `IsCollection` whose
+          // proof is an `IsMapOf`, so we parse `IsCollection` once and dispatch via `.asMap`.
           ReaderHandleAsCollectionRule,
           ReaderHandleAsNamedTupleRule,
           ReaderHandleAsSingletonRule,

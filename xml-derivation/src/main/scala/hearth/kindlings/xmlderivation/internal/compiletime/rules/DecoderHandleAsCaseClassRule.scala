@@ -20,7 +20,7 @@ trait DecoderHandleAsCaseClassRuleImpl {
       Log.info(s"Attempting to handle ${Type[A].prettyPrint} as a case class") >> {
         CaseClass.parse[A].toEither match {
           case Right(caseClass) =>
-            decodeCaseClassFields[A](caseClass, caseClass.primaryConstructor.parameters.flatten.toList)
+            decodeCaseClassFields[A](caseClass, caseClass.primaryConstructor.totalParameters.flatten.toList)
               .map(Rule.matched)
           case Left(reason) =>
             MIO.pure(Rule.yielded(reason))
@@ -68,20 +68,15 @@ trait DecoderHandleAsCaseClassRuleImpl {
 
               if (isTransient) {
                 val defaultValue: Expr[Any] = param.defaultValue match {
-                  case Some(existentialOuter) =>
-                    val methodOf = existentialOuter.value
-                    methodOf.value match {
-                      case noInstance: Method.NoInstance[?] =>
-                        noInstance(Map.empty) match {
-                          case Right(expr) => expr.asInstanceOf[Expr[Any]]
-                          case Left(_)     =>
-                            Environment.reportErrorAndAbort(
-                              s"Field '$fName' is annotated with @transientField but its default value could not be resolved"
-                            )
-                        }
-                      case _ =>
+                  case Some(method) =>
+                    foldInstanceFree(method, "Default value")(
+                      onTypes = _ => Map.empty,
+                      onValues = _ => Map.empty
+                    ) match {
+                      case Right(expr) => expr.value.asInstanceOf[Expr[Any]]
+                      case Left(_)     =>
                         Environment.reportErrorAndAbort(
-                          s"Field '$fName' is annotated with @transientField but has no default value"
+                          s"Field '$fName' is annotated with @transientField but its default value could not be resolved"
                         )
                     }
                   case None =>
@@ -138,7 +133,8 @@ trait DecoderHandleAsCaseClassRuleImpl {
                   Right(Expr.splice(constructExpr))
                 })
               case None =>
-                MIO.fail(new RuntimeException(s"Cannot construct ${Type[A].prettyPrint}"))
+                val err = DecoderDerivationError.CannotConstructType(Type[A].prettyPrint)
+                Log.error(err.message) >> MIO.fail(err)
             }
       }
     }
@@ -146,18 +142,13 @@ trait DecoderHandleAsCaseClassRuleImpl {
     /** Resolve a parameter's default value to an Expr[Any]. */
     private def resolveDefaultValue(fName: String, param: Parameter): Expr[Any] =
       param.defaultValue match {
-        case Some(existentialOuter) =>
-          val methodOf = existentialOuter.value
-          methodOf.value match {
-            case noInstance: Method.NoInstance[?] =>
-              noInstance(Map.empty) match {
-                case Right(expr) => expr.asInstanceOf[Expr[Any]]
-                case Left(_)     =>
-                  Environment.reportErrorAndAbort(
-                    s"Field '$fName' has useDefaults enabled but its default value could not be resolved"
-                  )
-              }
-            case _ =>
+        case Some(method) =>
+          foldInstanceFree(method, "Default value")(
+            onTypes = _ => Map.empty,
+            onValues = _ => Map.empty
+          ) match {
+            case Right(expr) => expr.value.asInstanceOf[Expr[Any]]
+            case Left(_)     =>
               Environment.reportErrorAndAbort(
                 s"Field '$fName' has useDefaults enabled but its default value could not be resolved"
               )
@@ -171,7 +162,7 @@ trait DecoderHandleAsCaseClassRuleImpl {
     @scala.annotation.nowarn("msg=is never used|unused explicit parameter")
     private def buildDecodeExpr[A: DecoderCtx](
         caseClass: CaseClass[A],
-        constructor: Method.NoInstance[A],
+        constructor: Method,
         fields: List[(String, Parameter)],
         decodings: List[FieldDecoding]
     ): MIO[Expr[Either[XmlDecodingError, A]]] = {
@@ -333,10 +324,14 @@ trait DecoderHandleAsCaseClassRuleImpl {
             .traverse { decodedValuesExpr =>
               val fieldMap: Map[String, Expr_??] =
                 makeAccessors.map(_(decodedValuesExpr)).toMap
-              constructor(fieldMap) match {
-                case Right(constructExpr) => MIO.pure(constructExpr)
+              foldInstanceFree(constructor, "Constructor")(
+                onTypes = _ => Map.empty,
+                onValues = _ => fieldMap
+              ) match {
+                case Right(constructExpr) => MIO.pure(constructExpr.value.asInstanceOf[Expr[A]])
                 case Left(error)          =>
-                  MIO.fail(new RuntimeException(s"Cannot construct ${Type[A].prettyPrint}: $error"))
+                  val err = DecoderDerivationError.CannotConstructType(Type[A].prettyPrint, Some(error))
+                  Log.error(err.message) >> MIO.fail(err)
               }
             }
             .map { builder =>

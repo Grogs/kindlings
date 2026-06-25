@@ -1,6 +1,9 @@
-# Kindlings
+<p style="text-align: center"><img src="assets/images/logo.svg" alt="Kindlings logo" style="height: 250px" /></p>
 
-Type class derivation that compiles faster, runs faster, and works the same on Scala 2.13 and Scala 3. Drop-in replacements for derivation in Circe, Jsoniter Scala, Avro, and more — built on [Hearth](https://github.com/kubuszok/hearth), powered by macros, free of the trade-offs you've learned to accept.
+<h1 style="margin-bottom:0">Kindlings</h1>
+<h2 style="margin-top:0">Hearth-powered sanely-automatic derivation.</h2>
+
+Type class derivation that compiles faster, runs faster, and works the same on Scala 2.13 and Scala 3. Drop-in replacements for derivation in Circe, Jsoniter Scala, Avro, and more — built with [Hearth](https://scala-hearth.readthedocs.io/), powered by macros, free of the trade-offs you've learned to accept.
 
 ## Quick start
 
@@ -10,6 +13,7 @@ Type class derivation that compiles faster, runs faster, and works the same on S
     // derivations:
     libraryDependencies += "com.kubuszok" %% "kindlings-avro-derivation" % "{{ kindlings_version() }}"
     libraryDependencies += "com.kubuszok" %% "kindlings-cats-derivation" % "{{ kindlings_version() }}"
+    libraryDependencies += "com.kubuszok" %% "kindlings-cats-tagless-derivation" % "{{ kindlings_version() }}"
     libraryDependencies += "com.kubuszok" %% "kindlings-circe-derivation" % "{{ kindlings_version() }}"
     libraryDependencies += "com.kubuszok" %% "kindlings-diff-derivation" % "{{ kindlings_version() }}"
     libraryDependencies += "com.kubuszok" %% "kindlings-fast-show-pretty" % "{{ kindlings_version() }}"
@@ -26,9 +30,16 @@ Type class derivation that compiles faster, runs faster, and works the same on S
     libraryDependencies += "com.kubuszok" %% "kindlings-cats-integration" % "{{ kindlings_version() }}"
     libraryDependencies += "com.kubuszok" %% "kindlings-iron-integration" % "{{ kindlings_version() }}"
     libraryDependencies += "com.kubuszok" %% "kindlings-refined-integration" % "{{ kindlings_version() }}"
-    
+
+    // macro utilities (not derivation):
+    libraryDependencies += "com.kubuszok" %% "kindlings-di" % "{{ kindlings_version() }}"
+    libraryDependencies += "com.kubuszok" %% "kindlings-di-cats" % "{{ kindlings_version() }}"
+    libraryDependencies += "com.kubuszok" %% "kindlings-mock" % "{{ kindlings_version() }}" % Test
+    libraryDependencies += "com.kubuszok" %% "kindlings-optics" % "{{ kindlings_version() }}"
+
     // extra:
     libraryDependencies += "com.kubuszok" %% "kindlings-jsoniter-json" % "{{ kindlings_version() }}"
+    libraryDependencies += "com.kubuszok" %% "kindlings-tapir-openapi-jsoniter" % "{{ kindlings_version() }}"
     ```
 
 !!! example "Scala CLI"
@@ -37,9 +48,10 @@ Type class derivation that compiles faster, runs faster, and works the same on S
     // derivations:
     //> using dep com.kubuszok::kindlings-avro-derivation:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-cats-derivation:{{ kindlings_version() }}
+    //> using dep com.kubuszok::kindlings-cats-tagless-derivation:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-circe-derivation:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-diff-derivation:{{ kindlings_version() }}
-    //> using dep com.kubuszok::kindlings-fast-show-pretty-derivation:{{ kindlings_version() }}
+    //> using dep com.kubuszok::kindlings-fast-show-pretty:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-jsoniter-derivation:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-pureconfig-derivation:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-scalacheck-derivation:{{ kindlings_version() }}
@@ -53,9 +65,16 @@ Type class derivation that compiles faster, runs faster, and works the same on S
     //> using dep com.kubuszok::kindlings-cats-integration:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-iron-integration:{{ kindlings_version() }}
     //> using dep com.kubuszok::kindlings-refined-integration:{{ kindlings_version() }}
-    
+
+    // macro utilities (not derivation):
+    //> using dep com.kubuszok::kindlings-di:{{ kindlings_version() }}
+    //> using dep com.kubuszok::kindlings-di-cats:{{ kindlings_version() }}
+    //> using dep com.kubuszok::kindlings-mock:{{ kindlings_version() }}
+    //> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
     // extra:
     //> using dep com.kubuszok::kindlings-jsoniter-json:{{ kindlings_version() }}
+    //> using dep com.kubuszok::kindlings-tapir-openapi-jsoniter:{{ kindlings_version() }}
     ```
 
 ??? example "Minimal example"
@@ -193,7 +212,9 @@ case class Order(quantity: Int Refined Positive, item: String)
 |---|---|---|
 | [kindlings-avro-derivation](avro-derivation.md) | avro4s (JVM only) | `AvroSchemaFor`, `AvroEncoder`, `AvroDecoder` |
 | [kindlings-cats-derivation](cats-derivation.md) | kittens | `Show`, `Eq`, `Order`, `Hash`, `Functor`, `Traverse`, and [29 more](cats-derivation.md) |
+| [kindlings-cats-tagless-derivation](cats-tagless-derivation.md) | cats-tagless macros | `FunctorK`, `ContravariantK`, `InvariantK`, `ApplyK`, `SemigroupalK`, `Instrument` |
 | [kindlings-circe-derivation](circe-derivation.md) | circe-generic-extras | `Encoder`, `Encoder.AsObject`, `Decoder` |
+| [kindlings-diff-derivation](diff-derivation.md) | _(original)_ | `Diff` |
 | [kindlings-fast-show-pretty](fast-show-pretty.md) | _(original)_ | `FastShowPretty` |
 | [kindlings-jsoniter-derivation](jsoniter-derivation.md) | jsoniter-scala `JsonCodecMaker` | `JsonValueCodec`, `JsonCodec`, `JsonKeyCodec` |
 | [kindlings-pureconfig-derivation](pureconfig-derivation.md) | PureConfig generic (JVM only) | `ConfigReader`, `ConfigWriter`, `ConfigConvert` |
@@ -216,8 +237,22 @@ All modules are cross-compiled for Scala 2.13 and 3, on JVM, Scala.js, and Scala
 
 Add the integration jar to your build and the types work transparently — no imports, no configuration. The macro extension system discovers providers at compile time via SPI.
 
+## Macro utilities
+
+Not type-class derivation, but built on the same Hearth macro-agnostic API and cross-compiled the same way — these modules reimplement popular libraries from scratch (no dependency on the originals).
+
+| Module | Reimplements | What it does |
+|---|---|---|
+| [kindlings-di](di.md) | macwire | Compile-time dependency injection — `wire`/`autowire`/`wiredInModule`, no reflection |
+| [kindlings-di-cats](di-cats.md) | — | Cats-Effect `Resource`/`IO` wiring on top of `kindlings-di` |
+| [kindlings-mock](mock.md) | ScalaMock | Compile-time mocks (`mock[T]`) with expectations, generated without reflection or bytecode |
+| [kindlings-optics](optics.md) | quicklens | `obj.modify(_.a.b)` lenses — nested copy-with-modification, `.each`/`.at`/`.when`, reusable lenses. `.each` works over any `IsCollection`/`IsMap`/`IsOption` container (built-ins + cats `NonEmpty*` via `kindlings-cats-integration`) |
+
+`kindlings-mock` is test-scope; the rest are cross-compiled for Scala 2.13 and 3 on JVM, Scala.js, and Scala Native.
+
 ## Extra
 
 | Module | Description |
 |---|---|
 | [kindlings-jsoniter-json](jsoniter-json.md) | Minimal JSON AST with optics and `JsonValueCodec` for jsoniter-scala — no Circe/Cats dependencies |
+| [kindlings-tapir-openapi-jsoniter](tapir-openapi-jsoniter.md) | Serialize tapir-generated OpenAPI (sttp-apispec model) to JSON with jsoniter — no Circe dependency. JVM + Scala.js |

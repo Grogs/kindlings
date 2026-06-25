@@ -115,7 +115,12 @@ implicit val config: JsoniterConfig = JsoniterConfig.default
 | `withBigDecimalDigitsLimit(n)` | Max BigDecimal digits |
 | `withMapMaxInsertNumber(n)` | Max map entries |
 | `withSetMaxInsertNumber(n)` | Max set entries |
+| `withBitSetValueLimit(n)` | Max value allowed in a `BitSet` (DoS protection, default `1024`) |
 | `withUseScalaEnumValueId` | Use enum value id for Scala enumerations |
+| `withJavaEnumValueNameMapper(f)` | Custom transform for Java enum value names |
+| `withSkipNestedOptionValues` | Skip writing `Some(None)` nested-option inner values |
+| `withAlwaysEmitDiscriminator` | Always write the discriminator field, even for the wrapper encoding |
+| `withInlineOneValueClasses` | Inline single-field case classes to their wrapped value |
 
 ## Annotations
 
@@ -236,24 +241,24 @@ scalacOptions += "-Xmacro-settings:jsoniterDerivation.logDerivation=true"
 All values in ops/s (higher is better). Measured on macOS, JVM temurin 17.
 
 !!! note
-    Kindlings matches or exceeds jsoniter-scala's own macros for all case class benchmarks. SimpleCC reads are slightly faster; Person read/write are at parity. ADT write has a small gap from discriminator overhead.
+    Kindlings matches jsoniter-scala's own macros: reads land at 0.96–1.04x and writes at 0.91–1.02x of the hand-tuned reference. The only consistent gap is SimpleADT write (0.91x on 2.13, 0.92x on 3).
 
 #### Write
 
 | Type | Scala | Kindlings semi | Kindlings auto | Original semi | vs original |
 |------|-------|---------------|---------------|--------------|------------|
-| SimpleCC | 2.13 | 59.8M | 59.5M | 59.7M | **~tied** |
-| SimpleCC | 3 | 62.7M | 62.9M | 63.8M | **~tied** |
-| Person | 2.13 | 4.7M | 4.7M | 4.6M | **~tied** |
-| Person | 3 | 5.3M | 5.3M | 5.2M | **~tied** |
-| Event | 2.13 | 4.3M | 4.2M | 4.0M | **1.08x faster** |
-| Event | 3 | 4.7M | 4.7M | 4.8M | **0.98x** |
+| SimpleCC | 2.13 | 61.1M | 59.3M | 60.8M | **~tied** |
+| SimpleCC | 3 | 63.6M | 63.9M | 63.8M | **~tied** |
+| Person | 2.13 | 4.8M | 4.7M | 4.7M | **~tied** |
+| Person | 3 | 5.5M | 5.4M | 5.4M | **~tied** |
+| Event | 2.13 | 4.5M | 4.5M | 4.3M | **~tied** |
+| Event | 3 | 4.8M | 4.8M | 4.9M | **~tied** |
 
 #### Read
 
 | Type | Scala | Kindlings semi | Kindlings auto | Original semi | vs original |
 |------|-------|---------------|---------------|--------------|------------|
-| SimpleCC | 2.13 | 36.1M | 36.0M | 34.8M | **1.04x faster** |
-| SimpleCC | 3 | 35.6M | 35.5M | 34.2M | **1.04x faster** |
-| Person | 2.13 | 3.6M | 3.7M | 3.6M | **~tied** |
-| Person | 3 | 3.6M | 3.6M | 3.6M | **~tied** |
+| SimpleCC | 2.13 | 36.4M | 35.8M | 35.5M | **~tied** |
+| SimpleCC | 3 | 36.4M | 36.4M | 35.1M | **~tied** |
+| Person | 2.13 | 3.6M | 3.6M | 3.8M | 0.96x |
+| Person | 3 | 3.6M | 3.7M | 3.8M | 0.98x |

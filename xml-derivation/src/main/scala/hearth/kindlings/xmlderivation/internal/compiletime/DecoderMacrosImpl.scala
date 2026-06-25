@@ -9,6 +9,7 @@ import hearth.kindlings.xmlderivation.internal.runtime.XmlDerivationUtils
 
 trait DecoderMacrosImpl
     extends XmlDerivationTimeout
+    with hearth.kindlings.derivation.compiletime.MethodFolds
     with rules.DecoderUseCachedDefWhenAvailableRuleImpl
     with rules.DecoderUseImplicitWhenAvailableRuleImpl
     with rules.DecoderHandleAsBuiltInRuleImpl
@@ -393,7 +394,9 @@ trait DecoderMacrosImpl
           DecoderHandleAsValueTypeRule,
           DecoderHandleAsBuiltInRule,
           DecoderHandleAsOptionRule,
-          DecoderHandleAsMapRule,
+          // DecoderHandleAsCollectionRule now handles maps too (single IsCollection parse + IsMapOf dispatch),
+          // so the standalone DecoderHandleAsMapRule is no longer in the chain (its object is kept for
+          // decodeMapEntries).
           DecoderHandleAsCollectionRule,
           DecoderHandleAsSingletonRule,
           DecoderHandleAsCaseClassRule,

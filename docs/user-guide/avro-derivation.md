@@ -288,8 +288,8 @@ import hearth.kindlings.avroderivation.annotations._
     // - UUID -> string with logicalType "uuid"
     // - Instant -> long with logicalType "timestamp-millis"
     // - LocalDate -> int with logicalType "date"
-    // - LocalTime -> int with logicalType "time-millis"
-    // - LocalDateTime -> long with logicalType "local-timestamp-millis"
+    // - LocalTime -> long with logicalType "time-micros"
+    // - LocalDateTime -> long with logicalType "timestamp-millis"
     val encoder = AvroEncoder.derived[EventRecord]
     val decoder = AvroDecoder.derived[EventRecord]
 
@@ -318,7 +318,7 @@ import hearth.kindlings.avroderivation.annotations._
     case class User(name: String)
 
     // Generic types encode type parameters in the schema name by default:
-    // Audited[User] -> "AuditedUser"
+    // Audited[User] -> "Audited__User" (type parameters joined with "__")
     val encoder = AvroEncoder.derived[Audited[User]]
     val decoder = AvroDecoder.derived[Audited[User]]
 
@@ -350,12 +350,12 @@ This enables `LogDerivation` implicits for `AvroSchemaFor`, `AvroEncoder`, and `
 | Recursive types | Needs workarounds | Yes | Just works |
 | Named tuples | No | No | Yes |
 | Scala 3 enums | No | Yes | Yes |
-| Java enums | No | Yes | Yes |
+| Java enums | Yes | Yes | Yes |
 | Opaque types | No | Partial | Yes |
 | Union types (Scala 3) | No | No | Yes |
 | Literal types (Scala 3) | No | No | Yes |
 | `@avroName` type renaming | Yes | Yes | Yes |
-| `@avroScalePrecision` per-field | Yes | Yes | Yes |
+| `@avroScalePrecision` per-field | No (v4: implicit `ScalePrecision` only) | Yes (param order `(scale, precision)`) | Yes (param order `(precision, scale)`) |
 | `@avroFqnParamNames` | No | No | Yes |
 
 ### Benchmarks
@@ -363,24 +363,24 @@ This enables `LogDerivation` implicits for `AvroSchemaFor`, `AvroEncoder`, and `
 All values in ops/s (higher is better). Measured on macOS, JVM temurin 17.
 
 !!! note
-    Kindlings is **3-5x faster** than avro4s across all benchmarks — both simple and complex nested types.
+    Kindlings is **1.5-6.7x faster** than avro4s across all benchmarks — both simple and complex nested types.
 
 #### Encode
 
 | Type | Scala | Kindlings | Original semi | Original auto | vs best original |
 |------|-------|-----------|--------------|--------------|-----------------|
-| SimpleCC | 2.13 | 281.7M | — | 45.0M | **6.3x faster** |
-| SimpleCC | 3 | 270.5M | 49.3M | 48.1M | **5.5x faster** |
-| Person | 2.13 | 19.6M | — | 4.6M | **4.3x faster** |
-| Person | 3 | 18.6M | 5.7M | 5.7M | **3.3x faster** |
+| SimpleCC | 2.13 | 272M | — | 44.6M | **6.1x faster** |
+| SimpleCC | 3 | 277M | 48.7M | 50.5M | **5.5x faster** |
+| Person | 2.13 | 19.5M | — | 4.5M | **4.3x faster** |
+| Person | 3 | 19.1M | 5.8M | 5.8M | **3.3x faster** |
 
 #### Decode
 
 | Type | Scala | Kindlings | Original semi | Original auto | vs best original |
 |------|-------|-----------|--------------|--------------|-----------------|
-| SimpleCC | 2.13 | 425.3M | — | 17.6M | **24.2x faster** |
-| SimpleCC | 3 | 474.1M | 23.2M | 42.9M | **11.1x faster** |
-| Person | 2.13 | 14.4M | — | 3.5M | **4.1x faster** |
-| Person | 3 | 13.8M | 3.2M | 4.1M | **3.4x faster** |
+| SimpleCC | 2.13 | 119M | — | 17.7M | **6.7x faster** |
+| SimpleCC | 3 | 127M | 26.0M | 83.9M | **1.5x faster** |
+| Person | 2.13 | 9.8M | — | 3.7M | **2.6x faster** |
+| Person | 3 | 9.3M | 3.1M | 4.4M | **2.1x faster** |
 
 Note: Kindlings semi-automatic and automatic derivation produce identical performance -- this is the "sanely-automatic" design.

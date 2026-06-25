@@ -19,6 +19,7 @@ import com.github.plokhotnyuk.jsoniter_scala.core.{
 
 trait CodecMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
+    with hearth.kindlings.derivation.compiletime.MethodFolds
     with rules.EncoderUseCachedDefWhenAvailableRuleImpl
     with rules.EncoderUseImplicitWhenAvailableRuleImpl
     with rules.EncoderHandleAsLiteralTypeRuleImpl
@@ -901,7 +902,9 @@ trait CodecMacrosImpl
           EncoderHandleAsBuiltInRule,
           EncoderHandleAsValueTypeRule,
           EncoderHandleAsOptionRule,
-          EncoderHandleAsMapRule,
+          // EncoderHandleAsCollectionRule now handles maps too (single IsCollection parse + IsMapOf dispatch),
+          // so the standalone EncoderHandleAsMapRule is no longer in the chain (its object is kept for
+          // deriveMapEntries / deriveKeyEncoding).
           EncoderHandleAsCollectionRule,
           EncoderHandleAsNamedTupleRule,
           EncoderHandleAsOneValueClassRule,
@@ -1030,9 +1033,9 @@ trait CodecMacrosImpl
   // when summoning finds library auto-derivation methods (e.g., KindlingsJsonCodec.derived).
   private[compiletime] lazy val codecIgnoredImplicits: Seq[UntypedMethod] =
     Type.of[KindlingsJsonValueCodec.type].methods.collect {
-      case method if method.value.isImplicit => method.value.asUntyped
+      case method if method.isImplicit => method.asUntyped
     } ++ Type.of[KindlingsJsonCodec.type].methods.collect {
-      case method if method.value.isImplicit => method.value.asUntyped
+      case method if method.isImplicit => method.asUntyped
     }
 
   // Cache for summonExprIgnoring results — avoids re-summoning the same type.
@@ -1088,7 +1091,9 @@ trait CodecMacrosImpl
           DecoderHandleAsBuiltInRule,
           DecoderHandleAsValueTypeRule,
           DecoderHandleAsOptionRule,
-          DecoderHandleAsMapRule,
+          // DecoderHandleAsCollectionRule now handles maps too (single IsCollection parse + IsMapOf dispatch),
+          // so the standalone DecoderHandleAsMapRule is no longer in the chain (its object is kept for
+          // decodeMapEntries / deriveKeyDecoding).
           DecoderHandleAsCollectionRule,
           DecoderHandleAsNamedTupleRule,
           DecoderHandleAsOneValueClassRule,

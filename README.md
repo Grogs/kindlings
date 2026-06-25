@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/user-guide/assets/images/logo.svg" alt="Kindlings logo" height="250px" /></p>
+
 # Kindlings
 
 Type class derivation that compiles faster, runs faster, and works the same on Scala 2.13 and Scala 3. Drop-in replacements for derivation in Circe, Jsoniter Scala, Avro, and more — built on Hearth, powered by macros, free of the trade-offs you've learned to accept.
@@ -88,13 +90,25 @@ The one exception: [Jsoniter Scala](https://github.com/plokhotnyuk/jsoniter-scal
 | `kindlings-iron-integration` | Iron constrained types (`A :| C`) — validated on decode, unwrapped on encode (Scala 3 only) |
 | `kindlings-refined-integration` | Refined types (`Refined[A, P]`) — validated on decode, unwrapped on encode |
 
+### Macro utilities (not derivation)
+
+Built on the same Hearth macro-agnostic API and cross-compiled the same way, but reimplementations of popular libraries from scratch (no dependency on the originals).
+
+| Module | Reimplements | What it does |
+|---|---|---|
+| `kindlings-di` | macwire | Compile-time dependency injection — `wire`/`autowire`/`wiredInModule`, no reflection |
+| `kindlings-di-cats` | _(original)_ | Cats-Effect `Resource`/`IO` wiring on top of `kindlings-di` |
+| `kindlings-mock` | ScalaMock | Compile-time mocks (`mock[T]`) with expectations, no reflection or bytecode (test-scope) |
+| `kindlings-optics` | quicklens | `obj.modify(_.a.b)` lenses — nested copy/`.each`/`.at`/`.when`; `.each` works over any `IsCollection`/`IsMap`/`IsOption` container, incl. cats `NonEmpty*` via `kindlings-cats-integration` |
+
 ### Extra
 
 | Module | Description |
 |---|---|
 | `kindlings-jsoniter-json` | Minimal JSON AST with optics and `JsonValueCodec` for jsoniter-scala |
+| `kindlings-tapir-openapi-jsoniter` | Serialize tapir-generated OpenAPI (sttp-apispec model) to JSON with jsoniter — no Circe dependency (JVM + Scala.js) |
 
-All modules are cross-compiled for Scala 2.13 and 3, on JVM, Scala.js, and Scala Native — except `kindlings-avro-derivation` and `kindlings-pureconfig-derivation`, which are JVM-only because their underlying libraries are JVM-only. Integration modules are add-and-forget: the macro extension system discovers them at compile time via SPI.
+All modules are cross-compiled for Scala 2.13 and 3, on JVM, Scala.js, and Scala Native — except `kindlings-avro-derivation` and `kindlings-pureconfig-derivation` (JVM-only because their underlying libraries are JVM-only) and the `kindlings-tapir-openapi-jsoniter` tapir bridge (JVM + Scala.js, since `tapir-openapi-docs` is not published for Native; its underlying codecs remain cross-platform). Integration modules are add-and-forget: the macro extension system discovers them at compile time via SPI.
 
 For a detailed feature-by-feature comparison of each module against the library it replaces, see the [Feature Parity](https://kubuszok.github.io/kindlings/feature-parity/) page in the documentation.
 

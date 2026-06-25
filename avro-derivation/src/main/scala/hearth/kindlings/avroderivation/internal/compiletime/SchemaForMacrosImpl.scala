@@ -49,12 +49,15 @@ trait SchemaForMacrosImpl
   def deriveInlineSchema[A: Type](configExpr: Expr[AvroConfig]): Expr[Schema] = {
     implicit val SchemaT: Type[Schema] = SfTypes.Schema
     implicit val ConfigT: Type[AvroConfig] = SfTypes.AvroConfig
+    // Evaluate the config at compile time when possible, so field-name mapping is a compile-time constant
+    // (no per-field `config.transformFieldNames(name)` call). Falls back to the runtime call when not evaluable.
+    val evConfig: Option[AvroConfig] = configExpr.semiEval.toOption
 
     deriveSchemaFromCtxAndAdaptForEntrypoint[A, Schema]("AvroSchemaFor.schemaOf") { fromCtx =>
       ValDefs.createVal[AvroConfig](configExpr).use { configVal =>
         Expr.quote {
           val _ = Expr.splice(configVal)
-          Expr.splice(fromCtx(SchemaForCtx.from[A](configVal, derivedType = None)))
+          Expr.splice(fromCtx(SchemaForCtx.from[A](configVal, derivedType = None, evaluatedConfig = evConfig)))
         }
       }
     }
@@ -66,6 +69,7 @@ trait SchemaForMacrosImpl
     implicit val SchemaT: Type[Schema] = SfTypes.Schema
     implicit val ConfigT: Type[AvroConfig] = SfTypes.AvroConfig
     val selfType: Option[??] = Some(Type[A].as_??)
+    val evConfig: Option[AvroConfig] = configExpr.semiEval.toOption
 
     deriveSchemaFromCtxAndAdaptForEntrypoint[A, AvroSchemaFor[A]]("AvroSchemaFor.derived") { fromCtx =>
       ValDefs.createVal[AvroConfig](configExpr).use { configVal =>
@@ -73,7 +77,7 @@ trait SchemaForMacrosImpl
           val cfg = Expr.splice(configVal)
           hearth.kindlings.avroderivation.internal.runtime.AvroDerivationFactories.schemaForInstance[A](
             Expr.splice {
-              fromCtx(SchemaForCtx.from[A](Expr.quote(cfg), derivedType = selfType))
+              fromCtx(SchemaForCtx.from[A](Expr.quote(cfg), derivedType = selfType, evaluatedConfig = evConfig))
             }
           )
         }
@@ -160,11 +164,18 @@ trait SchemaForMacrosImpl
       tpe: Type[A],
       config: Expr[AvroConfig],
       cache: MLocal[ValDefsCache],
-      derivedType: Option[??]
+      derivedType: Option[??],
+      namespaceOverride: Option[String] = None,
+      evaluatedConfig: Option[AvroConfig] = None
   ) {
 
     def nest[B: Type]: SchemaForCtx[B] = copy[B](
       tpe = Type[B]
+    )
+
+    def nestWithNamespaceOverride[B: Type](ns: String): SchemaForCtx[B] = copy[B](
+      tpe = Type[B],
+      namespaceOverride = Some(ns)
     )
 
     /** Sanitize a type's plainPrint for use as a Scala identifier in generated code. */
@@ -209,12 +220,14 @@ trait SchemaForMacrosImpl
 
     def from[A: Type](
         config: Expr[AvroConfig],
-        derivedType: Option[??]
+        derivedType: Option[??],
+        evaluatedConfig: Option[AvroConfig] = None
     ): SchemaForCtx[A] = SchemaForCtx(
       tpe = Type[A],
       config = config,
       cache = ValDefsCache.mlocal,
-      derivedType = derivedType
+      derivedType = derivedType,
+      evaluatedConfig = evaluatedConfig
     )
   }
 
@@ -228,11 +241,13 @@ trait SchemaForMacrosImpl
 
   /** Derives a schema within a shared cache, for use by encoder/decoder derivation. */
   def deriveSchemaInSharedScope[B: Type](config: Expr[AvroConfig], cache: MLocal[ValDefsCache]): MIO[Expr[Schema]] = {
+    val evConfig: Option[AvroConfig] = config.semiEval.toOption
     implicit val ctx: SchemaForCtx[B] = SchemaForCtx(
       tpe = Type[B],
       config = config,
       cache = cache,
-      derivedType = None
+      derivedType = None,
+      evaluatedConfig = evConfig
     )
     deriveSchemaRecursively[B]
   }
@@ -241,8 +256,9 @@ trait SchemaForMacrosImpl
     * deriveInlineSchema when calling from within an encoder/decoder MIO chain to avoid Scala 3 splice isolation issues.
     */
   def deriveSelfContainedSchema[B: Type](config: Expr[AvroConfig]): MIO[Expr[Schema]] = {
+    val evConfig: Option[AvroConfig] = config.semiEval.toOption
     val localCache = ValDefsCache.mlocal
-    val ctx = SchemaForCtx[B](Type[B], config, localCache, derivedType = None)
+    val ctx = SchemaForCtx[B](Type[B], config, localCache, derivedType = None, evaluatedConfig = evConfig)
     for {
       _ <- ensureStandardExtensionsLoaded()
       result <- deriveSchemaRecursively[B](using ctx)
@@ -272,7 +288,7 @@ trait SchemaForMacrosImpl
           AvroSchemaForHandleAsValueTypeRule,
           AvroSchemaForHandleAsOptionRule,
           AvroSchemaForHandleAsEitherRule,
-          AvroSchemaForHandleAsMapRule,
+          // Map handling is folded into the collection rule (single IsCollection parse, dispatched via `.asMap`).
           AvroSchemaForHandleAsCollectionRule,
           AvroSchemaForHandleAsNamedTupleRule,
           AvroSchemaForHandleAsSingletonRule,
@@ -312,10 +328,11 @@ trait SchemaForMacrosImpl
   }
 
   /** Computes the namespace expression for a record or enum type with the following priority:
-    *   1. `@avroNamespace` annotation (highest priority)
-    *   2. `AvroConfig.namespace` (explicit config)
-    *   3. Package name extracted from the type's fully qualified name
-    *   4. `""` (fallback for top-level types)
+    *   1. Field-level `@avroNamespace` override from the parent context (highest priority)
+    *   2. Type-level `@avroNamespace` annotation on the type itself
+    *   3. `AvroConfig.namespace` (explicit config)
+    *   4. Package name extracted from the type's fully qualified name
+    *   5. `""` (fallback for top-level types)
     */
   @scala.annotation.nowarn("msg=is never used")
   protected def computeNamespaceExpr[A: SchemaForCtx]: Expr[String] = {
@@ -323,15 +340,20 @@ trait SchemaForMacrosImpl
     implicit val AvroConfigT: Type[AvroConfig] = SfTypes.AvroConfig
     implicit val StringT: Type[String] = SfTypes.String
 
-    val classNamespace: Option[String] = getTypeAnnotationStringArg[avroNamespace, A]
-    val packageNamespace: String = extractPackageNamespace[A]
-
-    classNamespace match {
+    // Field-level override takes highest priority
+    sfctx.namespaceOverride match {
       case Some(ns) => Expr(ns)
       case None     =>
-        val packageNsExpr = Expr(packageNamespace)
-        Expr.quote {
-          Expr.splice(sfctx.config).namespace.getOrElse(Expr.splice(packageNsExpr))
+        val classNamespace: Option[String] = getTypeAnnotationStringArg[avroNamespace, A]
+        val packageNamespace: String = extractPackageNamespace[A]
+
+        classNamespace match {
+          case Some(ns) => Expr(ns)
+          case None     =>
+            val packageNsExpr = Expr(packageNamespace)
+            Expr.quote {
+              Expr.splice(sfctx.config).namespace.getOrElse(Expr.splice(packageNsExpr))
+            }
         }
     }
   }

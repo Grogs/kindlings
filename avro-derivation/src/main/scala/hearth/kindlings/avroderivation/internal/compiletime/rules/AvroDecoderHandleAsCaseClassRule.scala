@@ -40,7 +40,7 @@ trait AvroDecoderHandleAsCaseClassRuleImpl {
       implicit val avroAliasT: Type[avroAlias] = DecTypes.AvroAlias
 
       val constructor = caseClass.primaryConstructor
-      val fieldsList = constructor.parameters.flatten.toList
+      val fieldsList = constructor.totalParameters.flatten.toList
 
       // Validate: @transientField on fields without defaults is a compile error
       fieldsList.collectFirst {
@@ -58,16 +58,14 @@ trait AvroDecoderHandleAsCaseClassRuleImpl {
 
       // Build transient defaults map
       val transientDefaults: Map[String, Expr_??] = transientFields.flatMap { case (fName, param) =>
-        param.defaultValue.flatMap { existentialOuter =>
-          val methodOf = existentialOuter.value
-          methodOf.value match {
-            case noInstance: Method.NoInstance[?] =>
-              import noInstance.Returned
-              noInstance(Map.empty).toOption.map { defaultExpr =>
-                (fName, defaultExpr.as_??)
-              }
-            case _ => None
-          }
+        param.defaultValue.flatMap { method =>
+          foldInstanceFree(method, "Default value")(
+            onTypes = _ => Map.empty,
+            onValues = _ => Map.empty
+          ).toOption
+            .map { defaultExpr =>
+              (fName, defaultExpr)
+            }
         }
       }.toMap
 
@@ -110,7 +108,13 @@ trait AvroDecoderHandleAsCaseClassRuleImpl {
               val avroFieldNameExpr: Expr[String] = nameOverride match {
                 case Some(custom) => Expr(custom)
                 case None         =>
-                  Expr.quote(Expr.splice(dctx.config).transformFieldNames(Expr.splice(Expr(fName))))
+                  dctx.evaluatedConfig match {
+                    // Config statically known: map the field name at compile time to a constant string,
+                    // dropping the per-field runtime `config.transformFieldNames(name)` call.
+                    case Some(cfg) => Expr(cfg.transformFieldNames(fName))
+                    case None      =>
+                      Expr.quote(Expr.splice(dctx.config).transformFieldNames(Expr.splice(Expr(fName))))
+                  }
               }
               val aliases = getAllAnnotationStringArgs[avroAlias](param)
               val avroFixedSize = getAnnotationIntArg[avroFixed](param)
@@ -173,11 +177,14 @@ trait AvroDecoderHandleAsCaseClassRuleImpl {
             .flatMap { fieldData =>
               val fieldMap: Map[String, Expr_??] =
                 fieldData.toList.map { case (fName, decodedExpr) => (fName, decodedExpr) }.toMap ++ transientDefaults
-              caseClass.primaryConstructor(fieldMap) match {
+              foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                onTypes = _ => Map.empty,
+                onValues = _ => fieldMap
+              ) match {
                 case Right(constructExpr) =>
                   MIO.pure(Expr.quote {
                     val _ = AvroDerivationUtils.checkIsRecord(Expr.splice(dctx.avroValue))
-                    Expr.splice(constructExpr)
+                    Expr.splice(constructExpr.value.asInstanceOf[Expr[A]])
                   })
                 case Left(error) =>
                   val err = DecoderDerivationError.CannotConstructType(

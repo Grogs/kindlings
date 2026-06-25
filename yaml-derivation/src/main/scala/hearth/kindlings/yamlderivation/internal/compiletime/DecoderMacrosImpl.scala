@@ -12,6 +12,8 @@ import org.virtuslab.yaml.{ConstructError, Node, YamlDecoder, YamlError}
 
 trait DecoderMacrosImpl
     extends YamlDerivationTimeout
+    with hearth.kindlings.derivation.compiletime.MethodFolds
+    with hearth.kindlings.derivation.compiletime.EitherFieldsConstruct
     with rules.DecoderUseCachedDefWhenAvailableRuleImpl
     with rules.DecoderUseImplicitWhenAvailableRuleImpl
     with rules.DecoderHandleAsLiteralTypeRuleImpl
@@ -309,7 +311,9 @@ trait DecoderMacrosImpl
           DecoderUseImplicitWhenAvailableRule,
           DecoderHandleAsValueTypeRule,
           DecoderHandleAsOptionRule,
-          DecoderHandleAsMapRule,
+          // DecoderHandleAsCollectionRule now handles maps too (single IsCollection parse + IsMapOf dispatch),
+          // so the standalone DecoderHandleAsMapRule is no longer in the chain (its object is kept for
+          // decodeMapEntries).
           DecoderHandleAsCollectionRule,
           DecoderHandleAsNamedTupleRule,
           DecoderHandleAsSingletonRule,

@@ -1,4 +1,4 @@
-//> using scala 3.3.7
+//> using scala 3.3.8
 //> using dep com.kubuszok::scala-cli-md-spec:0.2.1
 //> using dep org.virtuslab::scala-yaml:0.3.1
 //> using jvm 17
@@ -107,6 +107,10 @@ class KindlingsExtendedRunner(runner: Runner)(
     "avro-derivation.md#Installation[2]" -> "Dep-only snippet",
     "cats-derivation.md#Installation[3]" -> "Dep-only snippet",
     "cats-integration.md#Installation[3]" -> "Dep-only snippet",
+    "cats-tagless-derivation.md#Installation[3]" -> "Dep-only snippet",
+    "di.md#Installation[2]" -> "Dep-only snippet",
+    "di-cats.md#Installation[2]" -> "Dep-only snippet",
+    "mock.md#Installation[2]" -> "Dep-only snippet",
     "circe-derivation.md#Installation[3]" -> "Dep-only snippet",
     "fast-show-pretty.md#Installation[3]" -> "Dep-only snippet",
     "index.md#Quick start[2]" -> "Dep-only snippet",
@@ -118,6 +122,7 @@ class KindlingsExtendedRunner(runner: Runner)(
     "scalacheck-derivation.md#Installation[3]" -> "Dep-only snippet",
     "sconfig-derivation.md#Installation[3]" -> "Dep-only snippet",
     "tapir-schema-derivation.md#Installation[4]" -> "Dep-only snippet",
+    "tapir-openapi-jsoniter.md#Installation[2]" -> "Dep-only snippet",
     "ubjson-derivation.md#Installation[3]" -> "Dep-only snippet",
     "xml-derivation.md#Installation[4]" -> "Dep-only snippet",
     "yaml-derivation.md#Installation[3]" -> "Dep-only snippet",

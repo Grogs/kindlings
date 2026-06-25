@@ -12,19 +12,27 @@ import com.github.plokhotnyuk.jsoniter_scala.core.JsonWriter
 trait EncoderHandleAsCollectionRuleImpl {
   this: CodecMacrosImpl & MacroCommons & StdExtensions & AnnotationSupport =>
 
-  object EncoderHandleAsCollectionRule extends EncoderDerivationRule("handle as collection when possible") {
+  object EncoderHandleAsCollectionRule extends EncoderDerivationRule("handle as collection or map when possible") {
     implicit val UnitT: Type[Unit] = CTypes.Unit
 
     def apply[A: EncoderCtx]: MIO[Rule.Applicability[Expr[Unit]]] =
-      Log.info(s"Attempting to handle ${Type[A].prettyPrint} as a collection") >> {
+      Log.info(s"Attempting to handle ${Type[A].prettyPrint} as a collection or map") >> {
         Type[A] match {
           case IsCollection(isCollection) =>
+            // A map is an `IsCollectionOf` whose proof is an `IsMapOf`. Parse `IsCollection` ONCE and dispatch on
+            // that, instead of the old map-rule (`IsMap.parse` = `IsCollection.parse` + cast) followed by a separate
+            // collection rule that parsed `IsCollection` again — every non-map field paid for the parse twice.
             import isCollection.Underlying as Item
-            if (ectx.evaluatedConfig.isDefined) encodeCollectionInline[A, Item](isCollection.value)
-            else encodeCollectionViaHelper[A, Item](isCollection.value)
+            isCollection.value.asMap match {
+              case Some(isMapOf) =>
+                EncoderHandleAsMapRule.deriveMapEntries[A, Item](isMapOf)
+              case None =>
+                if (ectx.evaluatedConfig.isDefined) encodeCollectionInline[A, Item](isCollection.value)
+                else encodeCollectionViaHelper[A, Item](isCollection.value)
+            }
 
           case _ =>
-            MIO.pure(Rule.yielded(s"The type ${Type[A].prettyPrint} is not a collection"))
+            MIO.pure(Rule.yielded(s"The type ${Type[A].prettyPrint} is not a collection or map"))
         }
       }
 
@@ -37,14 +45,14 @@ trait EncoderHandleAsCollectionRuleImpl {
       deriveEncoderRecursively[Item](using ectx.nest(dummyItem)).flatMap { _ =>
         ectx.getHelper[Item].map { helperOpt =>
           val helper = helperOpt.get
-          val iterableExpr = isCollection.asIterable(ectx.value)
+          // `foreach` lets the collection provider pick the cheapest iteration (e.g. arrays iterate by index,
+          // skipping the intermediate `asIterable` wrapper) instead of materialising an `Iterator`.
+          val writeElems = isCollection.foreach(ectx.value) { itemExpr =>
+            helper(itemExpr, ectx.writer, ectx.config)
+          }
           Rule.matched(Expr.quote {
             Expr.splice(ectx.writer).writeArrayStart()
-            val iter = Expr.splice(iterableExpr).iterator
-            while (iter.hasNext) {
-              val item: Item = iter.next()
-              Expr.splice(helper(Expr.quote(item), ectx.writer, ectx.config))
-            }
+            Expr.splice(writeElems)
             Expr.splice(ectx.writer).writeArrayEnd()
           })
         }

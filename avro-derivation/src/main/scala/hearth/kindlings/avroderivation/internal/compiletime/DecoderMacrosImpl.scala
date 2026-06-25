@@ -10,6 +10,7 @@ import org.apache.avro.Schema
 
 trait DecoderMacrosImpl
     extends AvroDerivationTimeout
+    with hearth.kindlings.derivation.compiletime.MethodFolds
     with rules.AvroDecoderUseCachedDefWhenAvailableRuleImpl
     with rules.AvroDecoderUseImplicitWhenAvailableRuleImpl
     with rules.AvroDecoderHandleAsLiteralTypeRuleImpl
@@ -34,6 +35,9 @@ trait DecoderMacrosImpl
   ): Expr[A] = {
     implicit val AnyT: Type[Any] = DecTypes.Any
     implicit val ConfigT: Type[AvroConfig] = DecTypes.AvroConfig
+    // Evaluate the config at compile time when possible, so field-name mapping is a compile-time constant
+    // (no per-field `config.transformFieldNames(name)` call). Falls back to the runtime call when not evaluable.
+    val evConfig: Option[AvroConfig] = configExpr.semiEval.toOption
 
     deriveDecoderFromCtxAndAdaptForEntrypoint[A, A]("AvroDecoder.decode") { fromCtx =>
       ValDefs.createVal[Any](avroValueExpr).use { avroVal =>
@@ -41,7 +45,7 @@ trait DecoderMacrosImpl
           Expr.quote {
             val _ = Expr.splice(avroVal)
             val _ = Expr.splice(configVal)
-            Expr.splice(fromCtx(DecoderCtx.from(avroVal, configVal, derivedType = None)))
+            Expr.splice(fromCtx(DecoderCtx.from(avroVal, configVal, derivedType = None, evaluatedConfig = evConfig)))
           }
         }
       }
@@ -55,6 +59,7 @@ trait DecoderMacrosImpl
     implicit val SchemaT: Type[Schema] = DecTypes.Schema
     implicit val ConfigT: Type[AvroConfig] = DecTypes.AvroConfig
     val selfType: Option[??] = Some(Type[A].as_??)
+    val evConfig: Option[AvroConfig] = configExpr.semiEval.toOption
 
     if (Type[A] =:= Type.of[Nothing].asInstanceOf[Type[A]] || Type[A] =:= Type.of[Any].asInstanceOf[Type[A]])
       Environment.reportErrorAndAbort(
@@ -102,7 +107,8 @@ trait DecoderMacrosImpl
                           Expr.quote(value),
                           Expr.quote(cfg),
                           derivedType = selfType,
-                          precomputedSchema = Some(Expr.quote(cachedSchema))
+                          precomputedSchema = Some(Expr.quote(cachedSchema)),
+                          evaluatedConfig = evConfig
                         )
                       )
                     }
@@ -225,7 +231,8 @@ trait DecoderMacrosImpl
       config: Expr[AvroConfig],
       cache: MLocal[ValDefsCache],
       derivedType: Option[??],
-      precomputedSchema: Option[Expr[org.apache.avro.Schema]] = None
+      precomputedSchema: Option[Expr[org.apache.avro.Schema]] = None,
+      evaluatedConfig: Option[AvroConfig] = None
   ) {
 
     def nest[B: Type](newValue: Expr[Any]): DecoderCtx[B] = copy[B](
@@ -315,14 +322,16 @@ trait DecoderMacrosImpl
         avroValue: Expr[Any],
         config: Expr[AvroConfig],
         derivedType: Option[??],
-        precomputedSchema: Option[Expr[org.apache.avro.Schema]] = None
+        precomputedSchema: Option[Expr[org.apache.avro.Schema]] = None,
+        evaluatedConfig: Option[AvroConfig] = None
     ): DecoderCtx[A] = DecoderCtx(
       tpe = Type[A],
       avroValue = avroValue,
       config = config,
       cache = ValDefsCache.mlocal,
       derivedType = derivedType,
-      precomputedSchema = precomputedSchema
+      precomputedSchema = precomputedSchema,
+      evaluatedConfig = evaluatedConfig
     )
   }
 
@@ -369,7 +378,7 @@ trait DecoderMacrosImpl
           AvroDecoderHandleAsValueTypeRule,
           AvroDecoderHandleAsOptionRule,
           AvroDecoderHandleAsEitherRule,
-          AvroDecoderHandleAsMapRule,
+          // Map handling is folded into the collection rule (single IsCollection parse, dispatched via `.asMap`).
           AvroDecoderHandleAsCollectionRule,
           AvroDecoderHandleAsNamedTupleRule,
           AvroDecoderHandleAsSingletonRule,

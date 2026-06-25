@@ -35,7 +35,7 @@ trait AvroEncoderHandleAsNamedTupleRuleImpl {
 
     @scala.annotation.nowarn("msg=is never used")
     private def encodeNamedTupleFields[A: EncoderCtx](
-        constructor: Method.NoInstance[A]
+        constructor: Method
     ): MIO[Expr[Any]] = {
       implicit val AnyT: Type[Any] = EncTypes.Any
       implicit val StringT: Type[String] = EncTypes.String
@@ -43,7 +43,7 @@ trait AvroEncoderHandleAsNamedTupleRuleImpl {
       implicit val ProductType: Type[Product] = EncTypes.Product
       implicit val IntType: Type[Int] = EncTypes.Int
 
-      val fields = constructor.parameters.flatten.toList
+      val fields = constructor.totalParameters.flatten.toList
 
       NonEmptyList.fromList(fields) match {
         case Some(fieldValues) =>
@@ -67,9 +67,16 @@ trait AvroEncoderHandleAsNamedTupleRuleImpl {
               val fieldsListExpr = fieldPairs.toList.foldRight(
                 Expr.quote(List.empty[(String, Any)])
               ) { case ((fName, fieldEncoded), acc) =>
+                val fieldNameExpr: Expr[String] = ectx.evaluatedConfig match {
+                  // Config statically known: map the field name at compile time to a constant string,
+                  // dropping the per-field runtime `config.transformFieldNames(name)` call.
+                  case Some(cfg) => Expr(cfg.transformFieldNames(fName))
+                  case None      =>
+                    Expr.quote(Expr.splice(ectx.config).transformFieldNames(Expr.splice(Expr(fName))))
+                }
                 Expr.quote {
                   (
-                    Expr.splice(ectx.config).transformFieldNames(Expr.splice(Expr(fName))),
+                    Expr.splice(fieldNameExpr),
                     Expr.splice(fieldEncoded)
                   ) :: Expr.splice(acc)
                 }

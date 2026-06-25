@@ -26,7 +26,8 @@ trait DecoderHandleAsMapRuleImpl {
         }
       }
 
-    private def decodeMapEntries[A: DecoderCtx, Pair: Type](
+    // Exposed so the combined collection-or-map rule can call it after a single IsCollection parse.
+    private[rules] def decodeMapEntries[A: DecoderCtx, Pair: Type](
         isMap: IsMapOf[A, Pair]
     ): MIO[Rule.Applicability[Expr[A]]] = {
       import isMap.{Key, Value, CtorResult}
@@ -792,14 +793,24 @@ trait DecoderHandleAsMapRuleImpl {
                                       case Some(cc) =>
                                         cc.construct[MIO](new CaseClass.ConstructField[MIO] {
                                           def apply(field: Parameter): MIO[Expr[field.tpe.Underlying]] =
-                                            MIO.fail(new RuntimeException("Unexpected parameter in enum singleton"))
+                                            MIO.fail(
+                                              CodecDerivationError
+                                                .UnexpectedParameterInSingleton(
+                                                  childName,
+                                                  "Unexpected parameter in enum singleton"
+                                                )
+                                            )
                                         }).flatMap {
                                           case Some(expr) => MIO.pure((childName, expr.asInstanceOf[Expr[K]]))
                                           case None       =>
-                                            MIO.fail(new RuntimeException(s"Cannot construct enum case $childName"))
+                                            val err =
+                                              CodecDerivationError.CannotConstructType(childName, isSingleton = true)
+                                            Log.error(err.message) >> MIO.fail(err)
                                         }
                                       case None =>
-                                        MIO.fail(new RuntimeException(s"Cannot construct enum case $childName"))
+                                        val err =
+                                          CodecDerivationError.CannotConstructType(childName, isSingleton = true)
+                                        Log.error(err.message) >> MIO.fail(err)
                                     }
                                 }
                               }

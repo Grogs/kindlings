@@ -17,6 +17,8 @@ import pureconfig.error.ConfigReaderFailures
 
 trait ReaderMacrosImpl
     extends PureconfigDerivationTimeout
+    with hearth.kindlings.derivation.compiletime.MethodFolds
+    with hearth.kindlings.derivation.compiletime.EitherFieldsConstruct
     with rules.ReaderUseCachedDefWhenAvailableRuleImpl
     with rules.ReaderUseImplicitWhenAvailableRuleImpl
     with rules.ReaderHandleAsValueTypeRuleImpl
@@ -257,7 +259,8 @@ trait ReaderMacrosImpl
           ReaderUseImplicitWhenAvailableRule,
           ReaderHandleAsValueTypeRule,
           ReaderHandleAsOptionRule,
-          ReaderHandleAsMapRule,
+          // ReaderHandleAsMapRule is merged into ReaderHandleAsCollectionRule: a map is an `IsCollection` whose
+          // proof is an `IsMapOf`, so we parse `IsCollection` once and dispatch via `.asMap`.
           ReaderHandleAsCollectionRule,
           ReaderHandleAsNamedTupleRule,
           ReaderHandleAsSingletonRule,

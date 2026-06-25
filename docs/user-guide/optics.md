@@ -1,0 +1,299 @@
+# Optics (quicklens-style lenses)
+
+A small optics library whose API is modelled on [SoftwareMill quicklens](https://github.com/softwaremill/quicklens),
+but which is an **independent, from-scratch reimplementation** — it does **not** depend on (or wrap) quicklens. The only
+dependency is Hearth, used for the macros.
+
+`obj.modify(_.a.b.c)` parses the path lambda at compile time and emits a nested copy-with-modification expression; the
+terminal operation (`setTo`/`using`/...) supplies the transformation. There is **no reflection and no bytecode
+generation**, so the exact same code cross-compiles to **JVM, Scala.js and Scala Native** on both Scala 2.13 and
+Scala 3.
+
+## Installation
+
+!!! example "sbt"
+
+    ```scala
+    libraryDependencies += "com.kubuszok" %%% "kindlings-optics" % "{{ kindlings_version() }}"
+    ```
+
+!!! example "Scala CLI"
+
+    ```scala
+    //> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+    ```
+
+## Quick start — `modify`
+
+Import the DSL, then focus a (possibly deeply nested) field of an immutable value and update it without writing the
+nested `.copy` chain by hand:
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Street(name: String)
+final case class Address(street: Street)
+final case class Person(name: String, address: Address)
+
+val p = Person("Anna", Address(Street("Main")))
+
+// focus _.address.street.name and upper-case it:
+val updated = p.modify(_.address.street.name).using(_.toUpperCase)
+
+println(updated.address.street.name)
+// expected output:
+// MAIN
+```
+
+### Terminal operations
+
+`PathModify[S, A]` (the result of `obj.modify(_…)`) offers:
+
+| Terminal                       | Effect                                                        |
+|--------------------------------|--------------------------------------------------------------|
+| `using(f: A => A)` / `apply(f)`| apply `f` to the focused field                               |
+| `setTo(v: A)`                  | replace the focused field with `v`                           |
+| `setToIfDefined(v: Option[A])` | replace only when `v` is defined                             |
+| `setToIf(cond)(v)`             | replace only when `cond` holds (`v` is by-name)              |
+| `usingIf(cond)(f)`             | apply `f` only when `cond` holds                             |
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Person(name: String, age: Int)
+val p = Person("Anna", 30)
+
+println(p.modify(_.age).setTo(31).age)
+// expected output:
+// 31
+```
+
+## Collections — `.each`
+
+`.each` focuses every element of any collection, every value of an `Option`, or every value of a `Map`. `.eachWhere(cond)`
+restricts the traversal to elements matching a predicate. The container is resolved through Hearth's
+`IsCollection`/`IsMap`/`IsOption` SPI, so **every container a provider supports works** — the built-ins (`List`,
+`Vector`, `Seq`, `Set`, `Array`, `IArray`, java collections, …) plus anything a jar on the classpath registers (see
+[Cats non-empty collections](#cats-non-empty-collections)). To support a custom container, register an
+`IsCollection.Provider` (the same SPI the derivation modules use) — no optics-specific code.
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Team(members: List[String])
+val team = Team(List("ann", "bob", "cid"))
+
+println(team.modify(_.members.each).using(_.toUpperCase).members.mkString(","))
+// expected output:
+// ANN,BOB,CID
+```
+
+### Cats non-empty collections
+
+Because `.each` goes through the `IsCollection`/`IsMap` SPI, cats' `NonEmptyList`/`NonEmptyVector`/`NonEmptyChain`/`Chain`
+(and `NonEmptyMap` for map values) work **automatically once `kindlings-cats-integration` is on the classpath** — it
+registers the providers, and the optics macro discovers them. There is **no optics-specific cats module and no import**
+beyond the DSL:
+
+```scala
+//> using scala {{ scala.2_13 }}
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+//> using dep com.kubuszok::kindlings-cats-integration:{{ kindlings_version() }}
+//> using dep org.typelevel::cats-core:{{ libraries.cats }}
+
+import hearth.kindlings.optics._
+import cats.data.NonEmptyList
+
+final case class Team(members: NonEmptyList[String])
+val team = Team(NonEmptyList.of("ann", "bob", "cid"))
+
+println(team.modify(_.members.each).using(_.toUpperCase).members.toList.mkString(","))
+// expected output:
+// ANN,BOB,CID
+```
+
+## Indexed access — `.at`, `.index`, `.atOrElse`
+
+`.at(i)` focuses the element at index `i` (throwing if absent); `.index(i)` is a no-op when absent; `.atOrElse(i, d)`
+inserts the default when absent. The same three names also work on a `Map` (keyed by the map key) and on an `Option`
+(with no index argument: `.at` / `.index` / `.atOrElse(default)`).
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Scores(values: List[Int])
+val s = Scores(List(10, 20, 30))
+
+println(s.modify(_.values.at(1)).using(_ + 100).values.mkString(","))
+// expected output:
+// 10,120,30
+```
+
+## `Either` — `.eachLeft` / `.eachRight`
+
+`.eachRight` focuses the `Right` branch of an `Either[L, R]`; `.eachLeft` focuses the `Left` branch. Each is a no-op on
+the other branch.
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Result(value: Either[String, Int])
+val r = Result(Right(41))
+
+println(r.modify(_.value.eachRight).using(_ + 1).value)
+// expected output:
+// Right(42)
+```
+
+## Subtype prism — `.when[Subtype]`
+
+`.when[Sub]` narrows the focus to a subtype of a sealed hierarchy; other subtypes are left unchanged (it is a
+non-exhaustive, 2-case match generated by the macro).
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+sealed trait Animal
+final case class Dog(name: String) extends Animal
+final case class Cat(name: String) extends Animal
+
+val a: Animal = Dog("rex")
+
+println(a.modify(_.when[Dog].name).using(_.toUpperCase))
+// expected output:
+// Dog(REX)
+```
+
+## Sealed hierarchies & enums — common fields
+
+When a field is declared on a sealed trait or Scala 3 `enum` (and present on every case), modify it directly with a
+plain `_.field` path — the macro generates the match over all subtypes for you, so `.when[Sub]` per case is not needed:
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+sealed trait Animal { def name: String }
+final case class Dog(name: String, age: Int) extends Animal
+final case class Cat(name: String, indoor: Boolean) extends Animal
+
+val a: Animal = Dog("Rex", 3)
+
+println(a.modify(_.name).using(_.toUpperCase))
+// expected output:
+// Dog(REX,3)
+```
+
+(Reach for `.when[Sub]` instead when the field exists on only *some* subtypes.)
+
+## Several paths at once — `modifyAll`
+
+`obj.modifyAll(_.a, _.b, _.c)` focuses several paths (which must share the same focus type) and applies the **same**
+modification to all of them. Overlapping field prefixes are shared — `modifyAll(_.a.x, _.a.y)` descends into `a` and
+rebuilds it with a **single** `.copy` carrying both updated leaves (true prefix merging, matching quicklens semantics).
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Names(first: String, second: String, third: String)
+val n = Names("ann", "bob", "cid")
+
+println(n.modifyAll(_.first, _.third).using(_.toUpperCase))
+// expected output:
+// Names(ANN,bob,CID)
+```
+
+A `.each` path can be mixed with a plain field path; the modification is applied to every focus:
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Box(xs: List[String], name: String)
+val box = Box(List("ann", "bob"), "label")
+
+println(box.modifyAll(_.xs.each, _.name).using(_.toUpperCase))
+// expected output:
+// Box(List(ANN, BOB),LABEL)
+```
+
+## Reusable lenses — `modifyLens` / `modifyAllLens` / `andThenModify`
+
+`modifyLens[T](_.a.b)` builds a `PathLazyModify[T, U]`: a reusable lens **not** bound to any particular object. Its
+terminal operations return a `T => T` function you can apply to many values:
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Person(name: String, age: Int)
+
+val anonymize: Person => Person = modifyLens[Person](_.name).setTo("anon")
+
+println(anonymize(Person("ann", 1)))
+println(anonymize(Person("bob", 2)))
+// expected output:
+// Person(anon,1)
+// Person(anon,2)
+```
+
+`PathLazyModify` exposes the same terminals as `PathModify` (`using`/`setTo`/`setToIfDefined`/`setToIf`/`usingIf`), each
+returning a `T => T`. `modifyAllLens[T](_.a, _.b)` is the multi-path form (with the same shared-prefix merging as
+`modifyAll`).
+
+Two lenses compose with `andThenModify`: a `PathLazyModify[T, U]` followed by a `PathLazyModify[U, V]` yields a
+`PathLazyModify[T, V]`:
+
+```scala
+//> using dep com.kubuszok::kindlings-optics:{{ kindlings_version() }}
+
+import hearth.kindlings.optics._
+
+final case class Address(city: String, street: String)
+final case class Person(name: String, address: Address)
+
+val toAddress = modifyLens[Person](_.address)
+val toCity    = modifyLens[Address](_.city)
+val toCityOfPerson = toAddress.andThenModify(toCity) // PathLazyModify[Person, String]
+
+println(toCityOfPerson.setTo("Berlin")(Person("ann", Address("old", "main"))))
+// expected output:
+// Person(ann,Address(Berlin,main))
+```
+
+## Errors
+
+The `.each`/`.at`/`.when`/... markers are `@compileTimeOnly` — using one outside a `modify`/`modifyLens` path is a
+compile error. A path that is not a field-access chain (optionally with the supported steps) is rejected with a clear
+message naming the unsupported step.
+
+## Notes & limitations
+
+- **What you can descend into.** A `_.field` step works on **case classes** and on **sealed hierarchies / Scala 3
+  `enum`s** — if a field is declared on the trait/enum (and present on every case), `modify(_.field)` generates the
+  match over subtypes for you, no `.when[Sub]` needed. **Collections, `Option`, `Either` and `Map`s** are traversed
+  with their combinators (`.each`, `.at`/`.index`/`.atOrElse`, `.eachLeft`/`.eachRight`), not by field descent — so all
+  of those work out of the box. The remaining gap is a **product-like class with a hand-written `copy`** that is neither
+  a case class nor a sealed hierarchy — that is **not** supported yet.
+- Documentation snippets here mirror the module's passing test suite (`ModifyFieldSpec`, `EachSpec`, `AtIndexSpec`,
+  `EitherSpec`, `WhenSpec`, `SealedFieldSpec`, `ModifyAllSpec`, `LensCompositionSpec`); their full snippet-test
+  execution runs in CI.
+</content>
+</invoke>

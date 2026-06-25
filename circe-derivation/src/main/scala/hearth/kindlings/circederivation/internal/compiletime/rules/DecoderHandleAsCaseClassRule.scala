@@ -60,7 +60,7 @@ trait DecoderHandleAsCaseClassRuleImpl {
       implicit val transientFieldT: Type[transientField] = DTypes.TransientField
 
       val constructor = caseClass.primaryConstructor
-      val fieldsList = constructor.parameters.flatten.toList
+      val fieldsList = constructor.totalParameters.flatten.toList
 
       // Validate: @transientField on fields without defaults is a compile error
       fieldsList
@@ -180,14 +180,12 @@ trait DecoderHandleAsCaseClassRuleImpl {
                 deriveFieldDecoder[Field].map { decoderExpr =>
                   val defaultAsAnyOpt: Option[Expr[Any]] =
                     if (param.hasDefault)
-                      param.defaultValue.flatMap { existentialOuter =>
-                        val methodOf = existentialOuter.value
-                        methodOf.value match {
-                          case noInstance: Method.NoInstance[?] =>
-                            import noInstance.Returned
-                            noInstance(Map.empty).toOption.map(_.upcast[Any])
-                          case _ => None
-                        }
+                      param.defaultValue.flatMap { method =>
+                        foldInstanceFree(method, "Default value")(
+                          onTypes = _ => Map.empty,
+                          onValues = _ => Map.empty
+                        ).toOption
+                          .map { ee => import ee.Underlying; ee.value.upcast[Any] }
                       }
                     else None
 
@@ -414,7 +412,15 @@ trait DecoderHandleAsCaseClassRuleImpl {
                     }
                     (fName, typedExpr.as_??)
                   }
-                  (ffExpr, accExpr, makeAccessor)
+                  // Same cast as `makeAccessor`, but reading the already-bound `Right` value directly (used by the
+                  // zero-allocation fail-fast construction, which never builds the intermediate `Array[Any]`).
+                  val makeFieldArg: Expr[Any] => (String, Expr_??) = { valExpr =>
+                    val typedExpr = Expr.quote {
+                      CirceDerivationUtils.unsafeCast(Expr.splice(valExpr), Expr.splice(decoderExpr))
+                    }
+                    (fName, typedExpr.as_??)
+                  }
+                  (ffExpr, accExpr, makeAccessor, makeFieldArg)
                 }
               }
             }
@@ -422,12 +428,11 @@ trait DecoderHandleAsCaseClassRuleImpl {
               val ffExprs = fieldData.toList.map(_._1)
               val accExprs = fieldData.toList.map(_._2)
               val makeAccessors = fieldData.toList.map(_._3)
+              val makeFieldArgs = fieldData.toList.map(_._4)
 
-              // Step 2: Build List literals for both paths
-              val ffListExpr: Expr[List[Either[DecodingFailure, Any]]] =
-                ffExprs.foldRight(Expr.quote(List.empty[Either[DecodingFailure, Any]])) { (elem, acc) =>
-                  Expr.quote(Expr.splice(elem) :: Expr.splice(acc))
-                }
+              // The accumulating path still sequences a List of all field results (it must evaluate every field to
+              // collect all errors). The fail-fast path is built below as zero-allocation nested Either folds and
+              // needs no List.
               val accListExpr: Expr[List[ValidatedNel[DecodingFailure, Any]]] =
                 accExprs.foldRight(Expr.quote(List.empty[ValidatedNel[DecodingFailure, Any]])) { (elem, acc) =>
                   Expr.quote(Expr.splice(elem) :: Expr.splice(acc))
@@ -439,19 +444,45 @@ trait DecoderHandleAsCaseClassRuleImpl {
                 .traverse { decodedValuesExpr =>
                   val fieldMap: Map[String, Expr_??] =
                     makeAccessors.map(_(decodedValuesExpr)).toMap
-                  caseClass.primaryConstructor(fieldMap) match {
-                    case Right(constructExpr) => MIO.pure(constructExpr)
+                  foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                    onTypes = _ => Map.empty,
+                    onValues = _ => fieldMap
+                  ) match {
+                    case Right(constructExpr) => MIO.pure(constructExpr.value.asInstanceOf[Expr[A]])
                     case Left(error)          =>
                       val err = DecoderDerivationError.CannotConstructType(
                         Type[A].prettyPrint,
                         isSingleton = false,
-                        Some(error)
+                        Some(error.toString)
                       )
                       Log.error(err.message) >> MIO.fail(err)
                   }
                 }
                 .map { builder =>
                   val constructLambda = builder.build[A]
+
+                  // Fail-fast construction: nested zero-closure `Either` folds (no List/Array/closure). Short-circuits
+                  // on the first Left and only decodes a field once all earlier fields have succeeded. The same final
+                  // value is produced as the accumulating path, but without the intermediate allocations.
+                  def constructFF(boundValues: List[Expr[Any]]): Expr[A] = {
+                    val fieldMap: Map[String, Expr_??] =
+                      makeFieldArgs.zip(boundValues).map { case (mk, v) => mk(v) }.toMap
+                    foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                      onTypes = _ => Map.empty,
+                      onValues = _ => fieldMap
+                    ) match {
+                      case Right(constructExpr) => constructExpr.value.asInstanceOf[Expr[A]]
+                      case Left(error)          =>
+                        Environment.reportErrorAndAbort(
+                          DecoderDerivationError
+                            .CannotConstructType(Type[A].prettyPrint, isSingleton = false, Some(error.toString))
+                            .message
+                        )
+                    }
+                  }
+                  val ffConstructed: Expr[Either[DecodingFailure, A]] =
+                    buildEitherFailFast[DecodingFailure, A](ffExprs)(constructFF)
+
                   val strictDecodingStaticallyFalse: Boolean =
                     dctx.evaluatedConfig.exists(!_.strictDecoding)
 
@@ -497,9 +528,7 @@ trait DecoderHandleAsCaseClassRuleImpl {
                     // strictDecoding is statically false — skip the strict decoding check entirely
                     Expr.quote {
                       (if (Expr.splice(dctx.failFast)) {
-                         CirceDerivationUtils
-                           .sequenceDecodeResults(Expr.splice(ffListExpr))
-                           .map(Expr.splice(constructLambda))
+                         Expr.splice(ffConstructed)
                        } else {
                          CirceDerivationUtils
                            .sequenceDecodeResultsAccumulating(Expr.splice(accListExpr))
@@ -511,9 +540,7 @@ trait DecoderHandleAsCaseClassRuleImpl {
                       val config = Expr.splice(dctx.config)
                       (if (Expr.splice(dctx.failFast)) {
                          // --- Fail-fast path ---
-                         val decoded = CirceDerivationUtils
-                           .sequenceDecodeResults(Expr.splice(ffListExpr))
-                           .map(Expr.splice(constructLambda))
+                         val decoded = Expr.splice(ffConstructed)
                          if (config.strictDecoding) {
                            val expectedFields = Expr.splice(
                              resolvedFieldNames.getOrElse(

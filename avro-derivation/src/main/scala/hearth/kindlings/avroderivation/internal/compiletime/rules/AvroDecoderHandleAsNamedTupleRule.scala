@@ -37,22 +37,25 @@ trait AvroDecoderHandleAsNamedTupleRuleImpl {
 
     @scala.annotation.nowarn("msg=is never used|unused explicit parameter")
     private def decodeNamedTupleFields[A: DecoderCtx](
-        constructor: Method.NoInstance[A]
+        constructor: Method
     ): MIO[Expr[A]] = {
       implicit val StringT: Type[String] = DecTypes.String
       implicit val AnyT: Type[Any] = DecTypes.Any
       implicit val ArrayAnyT: Type[Array[Any]] = DecTypes.ArrayAny
 
-      val fieldsList = constructor.parameters.flatten.toList
+      val fieldsList = constructor.totalParameters.flatten.toList
 
       NonEmptyList.fromList(fieldsList) match {
         case None =>
           // Empty named tuple — validate input is a record and construct
-          constructor(Map.empty) match {
+          foldInstanceFree(constructor, "Constructor")(
+            onTypes = _ => Map.empty,
+            onValues = _ => Map.empty
+          ) match {
             case Right(constructExpr) =>
               MIO.pure(Expr.quote {
                 val _ = AvroDerivationUtils.checkIsRecord(Expr.splice(dctx.avroValue))
-                Expr.splice(constructExpr)
+                Expr.splice(constructExpr.value.asInstanceOf[Expr[A]])
               })
             case Left(error) =>
               val err =
@@ -70,12 +73,16 @@ trait AvroDecoderHandleAsNamedTupleRuleImpl {
               import param.tpe.Underlying as Field
               Log.namedScope(s"Deriving decoder for named tuple field $fName: ${Type[Field].prettyPrint}") {
                 deriveFieldDecoder[Field].map { decoderExpr =>
+                  // Map the field name at compile time when the config is statically known (no runtime
+                  // `config.transformFieldNames(name)` call); fall back to the runtime call otherwise.
+                  val fieldNameExpr: Expr[String] = dctx.evaluatedConfig match {
+                    case Some(cfg) => Expr(cfg.transformFieldNames(fName))
+                    case None      =>
+                      Expr.quote(Expr.splice(dctx.config).transformFieldNames(Expr.splice(Expr(fName))))
+                  }
                   val decodeExpr: Expr[Any] = Expr.quote {
                     val record = Expr.splice(dctx.avroValue).asInstanceOf[GenericRecord]
-                    val fieldValue = AvroDerivationUtils.decodeRecord(
-                      record,
-                      Expr.splice(dctx.config).transformFieldNames(Expr.splice(Expr(fName)))
-                    )
+                    val fieldValue = AvroDerivationUtils.decodeRecord(record, Expr.splice(fieldNameExpr))
                     Expr.splice(decoderExpr).decode(fieldValue): Any
                   }
                   val makeAccessor: Expr[Array[Any]] => (String, Expr_??) = { arrExpr =>
@@ -105,8 +112,11 @@ trait AvroDecoderHandleAsNamedTupleRuleImpl {
                 .traverse { decodedValuesExpr =>
                   val fieldMap: Map[String, Expr_??] =
                     makeAccessors.map(_(decodedValuesExpr)).toMap
-                  constructor(fieldMap) match {
-                    case Right(constructExpr) => MIO.pure(constructExpr)
+                  foldInstanceFree(constructor, "Constructor")(
+                    onTypes = _ => Map.empty,
+                    onValues = _ => fieldMap
+                  ) match {
+                    case Right(constructExpr) => MIO.pure(constructExpr.value.asInstanceOf[Expr[A]])
                     case Left(error)          =>
                       val err = DecoderDerivationError.CannotConstructType(
                         Type[A].prettyPrint,
