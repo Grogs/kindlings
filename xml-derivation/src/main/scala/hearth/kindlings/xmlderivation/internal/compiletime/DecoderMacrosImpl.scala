@@ -9,6 +9,7 @@ import hearth.kindlings.xmlderivation.internal.runtime.XmlDerivationUtils
 
 trait DecoderMacrosImpl
     extends XmlDerivationTimeout
+    with XmlDerivationPolicy
     with hearth.kindlings.derivation.compiletime.MethodFolds
     with rules.DecoderUseCachedDefWhenAvailableRuleImpl
     with rules.DecoderUseImplicitWhenAvailableRuleImpl
@@ -19,7 +20,12 @@ trait DecoderMacrosImpl
     with rules.DecoderHandleAsCollectionRuleImpl
     with rules.DecoderHandleAsSingletonRuleImpl
     with rules.DecoderHandleAsCaseClassRuleImpl
-    with rules.DecoderHandleAsEnumRuleImpl { this: MacroCommons & StdExtensions & AnnotationSupport =>
+    with rules.DecoderHandleAsEnumRuleImpl
+    with rules.DecoderDerivationPolicyRuleImpl { this: MacroCommons & StdExtensions & AnnotationSupport =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsXmlDecoder"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -391,6 +397,7 @@ trait DecoderMacrosImpl
       .namedScope(s"Deriving XML decoder via rules for type ${Type[A].prettyPrint}") {
         Rules(
           DecoderUseImplicitWhenAvailableRule,
+          DecoderDerivationPolicyRule,
           DecoderHandleAsValueTypeRule,
           DecoderHandleAsBuiltInRule,
           DecoderHandleAsOptionRule,

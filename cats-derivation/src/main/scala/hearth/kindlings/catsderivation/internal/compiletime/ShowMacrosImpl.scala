@@ -9,6 +9,7 @@ import hearth.kindlings.catsderivation.LogDerivation
 trait ShowMacrosImpl
     extends AnnotationSupport
     with StrictDerivationSupport
+    with rules.ShowDerivationPolicyRuleImpl
     with rules.ShowUseCachedRuleImpl
     with rules.ShowUseImplicitRuleImpl
     with rules.ShowBuiltInRuleImpl
@@ -116,6 +117,7 @@ trait ShowMacrosImpl
       Rules(
         ShowUseCachedRule,
         ShowUseImplicitRule,
+        ShowDerivationPolicyRule,
         ShowBuiltInRule,
         ShowValueTypeRule,
         ShowOptionRule,

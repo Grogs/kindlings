@@ -11,6 +11,7 @@ import org.virtuslab.yaml.{Node, YamlEncoder}
 
 trait EncoderMacrosImpl
     extends YamlDerivationTimeout
+    with YamlDerivationPolicy
     with rules.EncoderUseCachedDefWhenAvailableRuleImpl
     with rules.EncoderUseImplicitWhenAvailableRuleImpl
     with rules.EncoderHandleAsLiteralTypeRuleImpl
@@ -21,8 +22,13 @@ trait EncoderMacrosImpl
     with rules.EncoderHandleAsNamedTupleRuleImpl
     with rules.EncoderHandleAsSingletonRuleImpl
     with rules.EncoderHandleAsCaseClassRuleImpl
-    with rules.EncoderHandleAsEnumRuleImpl {
+    with rules.EncoderHandleAsEnumRuleImpl
+    with rules.EncoderDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsYamlEncoder"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -277,6 +283,7 @@ trait EncoderMacrosImpl
         Rules(
           EncoderHandleAsLiteralTypeRule,
           EncoderUseImplicitWhenAvailableRule,
+          EncoderDerivationPolicyRule,
           EncoderHandleAsValueTypeRule,
           EncoderHandleAsOptionRule,
           // EncoderHandleAsCollectionRule now handles maps too (single IsCollection parse + IsMapOf dispatch),

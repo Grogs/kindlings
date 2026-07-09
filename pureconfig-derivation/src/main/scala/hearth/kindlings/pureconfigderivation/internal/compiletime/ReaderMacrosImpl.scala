@@ -17,6 +17,7 @@ import pureconfig.error.ConfigReaderFailures
 
 trait ReaderMacrosImpl
     extends PureconfigDerivationTimeout
+    with PureconfigDerivationPolicy
     with hearth.kindlings.derivation.compiletime.MethodFolds
     with hearth.kindlings.derivation.compiletime.EitherFieldsConstruct
     with rules.ReaderUseCachedDefWhenAvailableRuleImpl
@@ -28,8 +29,13 @@ trait ReaderMacrosImpl
     with rules.ReaderHandleAsNamedTupleRuleImpl
     with rules.ReaderHandleAsSingletonRuleImpl
     with rules.ReaderHandleAsCaseClassRuleImpl
-    with rules.ReaderHandleAsEnumRuleImpl {
+    with rules.ReaderHandleAsEnumRuleImpl
+    with rules.ReaderDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsConfigReader"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -257,6 +263,7 @@ trait ReaderMacrosImpl
       .namedScope(s"Deriving reader via rules for type ${Type[A].prettyPrint}") {
         Rules(
           ReaderUseImplicitWhenAvailableRule,
+          ReaderDerivationPolicyRule,
           ReaderHandleAsValueTypeRule,
           ReaderHandleAsOptionRule,
           // ReaderHandleAsMapRule is merged into ReaderHandleAsCollectionRule: a map is an `IsCollection` whose

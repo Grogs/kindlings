@@ -8,6 +8,7 @@ import hearth.kindlings.catsderivation.LogDerivation
 
 trait EqMacrosImpl
     extends StrictDerivationSupport
+    with rules.EqDerivationPolicyRuleImpl
     with rules.EqUseCachedRuleImpl
     with rules.EqUseImplicitRuleImpl
     with rules.EqBuiltInRuleImpl
@@ -107,6 +108,7 @@ trait EqMacrosImpl
       Rules(
         EqUseCachedRule,
         EqUseImplicitRule,
+        EqDerivationPolicyRule,
         EqBuiltInRule,
         EqValueTypeRule,
         EqOptionRule,

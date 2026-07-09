@@ -10,6 +10,7 @@ import org.ekrich.config.ConfigValue
 
 trait WriterMacrosImpl
     extends SconfigDerivationTimeout
+    with SconfigDerivationPolicy
     with rules.WriterUseCachedDefWhenAvailableRuleImpl
     with rules.WriterUseImplicitWhenAvailableRuleImpl
     with rules.WriterHandleAsValueTypeRuleImpl
@@ -19,8 +20,13 @@ trait WriterMacrosImpl
     with rules.WriterHandleAsNamedTupleRuleImpl
     with rules.WriterHandleAsSingletonRuleImpl
     with rules.WriterHandleAsCaseClassRuleImpl
-    with rules.WriterHandleAsEnumRuleImpl {
+    with rules.WriterHandleAsEnumRuleImpl
+    with rules.WriterDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "ConfigWriter"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -234,6 +240,7 @@ trait WriterMacrosImpl
       .namedScope(s"Deriving writer via rules for type ${Type[A].prettyPrint}") {
         Rules(
           WriterUseImplicitWhenAvailableRule,
+          WriterDerivationPolicyRule,
           WriterHandleAsValueTypeRule,
           WriterHandleAsOptionRule,
           // WriterHandleAsMapRule is merged into WriterHandleAsCollectionRule: a map is an `IsCollection` whose

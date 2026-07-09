@@ -10,6 +10,7 @@ import org.apache.avro.Schema
 
 trait EncoderMacrosImpl
     extends AvroDerivationTimeout
+    with AvroDerivationPolicy
     with rules.AvroEncoderUseCachedDefWhenAvailableRuleImpl
     with rules.AvroEncoderUseImplicitWhenAvailableRuleImpl
     with rules.AvroEncoderHandleAsLiteralTypeRuleImpl
@@ -22,8 +23,13 @@ trait EncoderMacrosImpl
     with rules.AvroEncoderHandleAsNamedTupleRuleImpl
     with rules.AvroEncoderHandleAsSingletonRuleImpl
     with rules.AvroEncoderHandleAsCaseClassRuleImpl
-    with rules.AvroEncoderHandleAsEnumRuleImpl {
+    with rules.AvroEncoderHandleAsEnumRuleImpl
+    with rules.AvroEncoderDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & SchemaForMacrosImpl & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "AvroEncoder"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -387,6 +393,7 @@ trait EncoderMacrosImpl
         Rules(
           AvroEncoderHandleAsLiteralTypeRule,
           AvroEncoderUseImplicitWhenAvailableRule,
+          AvroEncoderDerivationPolicyRule,
           AvroEncoderUseBuiltInSupportRule,
           AvroEncoderHandleAsValueTypeRule,
           AvroEncoderHandleAsOptionRule,

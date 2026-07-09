@@ -12,6 +12,7 @@ import sttp.tapir.Schema.SName
 
 trait SchemaMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
+    with TapirSchemaDerivationPolicy
     with rules.SchemaUseCachedWhenAvailableRuleImpl
     with rules.SchemaUseSelfRefWhenRecursiveRuleImpl
     with rules.SchemaUseImplicitWhenAvailableRuleImpl
@@ -21,8 +22,13 @@ trait SchemaMacrosImpl
     with rules.SchemaHandleAsValueTypeRuleImpl
     with rules.SchemaHandleAsSingletonRuleImpl
     with rules.SchemaHandleAsCaseClassRuleImpl
-    with rules.SchemaHandleAsEnumRuleImpl {
+    with rules.SchemaHandleAsEnumRuleImpl
+    with rules.SchemaDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & JsonSchemaConfigs & AnnotationSupport =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsSchema"
+  // $COVERAGE-ON$
 
   override protected def derivationSettingsNamespace: String = "tapirSchemaDerivation"
 
@@ -278,6 +284,7 @@ trait SchemaMacrosImpl
       Rules(
         SchemaUseSelfRefWhenRecursiveRule,
         SchemaUseImplicitWhenAvailableRule,
+        SchemaDerivationPolicyRule,
         SchemaHandleAsOptionRule,
         SchemaHandleAsMapRule,
         SchemaHandleAsCollectionRule,

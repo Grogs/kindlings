@@ -9,6 +9,7 @@ import hearth.kindlings.catsderivation.LogDerivation
 /** Order derivation: lexicographic comparison of case class fields, ordinal comparison for enums. */
 trait OrderMacrosImpl
     extends StrictDerivationSupport
+    with rules.OrderDerivationPolicyRuleImpl
     with rules.OrderUseCachedRuleImpl
     with rules.OrderUseImplicitRuleImpl
     with rules.OrderBuiltInRuleImpl
@@ -101,6 +102,7 @@ trait OrderMacrosImpl
       Rules(
         OrderUseCachedRule,
         OrderUseImplicitRule,
+        OrderDerivationPolicyRule,
         OrderBuiltInRule,
         OrderValueTypeRule,
         OrderSingletonRule,

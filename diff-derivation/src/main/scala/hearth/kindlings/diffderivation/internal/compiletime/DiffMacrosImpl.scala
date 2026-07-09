@@ -9,6 +9,7 @@ import hearth.kindlings.diffderivation.internal.runtime.*
 trait DiffMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
     with hearth.kindlings.derivation.compiletime.LoadStandardExtensionsOnce
+    with DiffDerivationPolicy
     with rules.DiffUseCachedRuleImpl
     with rules.DiffUseImplicitRuleImpl
     with rules.DiffBuiltInRuleImpl
@@ -18,7 +19,12 @@ trait DiffMacrosImpl
     with rules.DiffCollectionRuleImpl
     with rules.DiffSingletonRuleImpl
     with rules.DiffCaseClassRuleImpl
-    with rules.DiffEnumRuleImpl { this: MacroCommons & StdExtensions =>
+    with rules.DiffEnumRuleImpl
+    with rules.DiffDerivationPolicyRuleImpl { this: MacroCommons & StdExtensions =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "Diff"
+  // $COVERAGE-ON$
 
   override protected def derivationSettingsNamespace: String = "diffDerivation"
 
@@ -68,6 +74,7 @@ trait DiffMacrosImpl
       Rules(
         DiffUseCachedRule,
         DiffUseImplicitRule,
+        DiffDerivationPolicyRule,
         DiffBuiltInRule,
         DiffValueTypeRule,
         DiffOptionRule,

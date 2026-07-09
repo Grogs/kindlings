@@ -10,6 +10,7 @@ import io.circe.{Encoder, Json, JsonObject, KeyEncoder}
 
 trait EncoderMacrosImpl
     extends CirceDerivationTimeout
+    with CirceDerivationPolicy
     with rules.EncoderUseCachedDefWhenAvailableRuleImpl
     with rules.EncoderUseImplicitWhenAvailableRuleImpl
     with rules.EncoderHandleAsLiteralTypeRuleImpl
@@ -20,8 +21,13 @@ trait EncoderMacrosImpl
     with rules.EncoderHandleAsNamedTupleRuleImpl
     with rules.EncoderHandleAsSingletonRuleImpl
     with rules.EncoderHandleAsCaseClassRuleImpl
-    with rules.EncoderHandleAsEnumRuleImpl {
+    with rules.EncoderHandleAsEnumRuleImpl
+    with rules.EncoderDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsEncoder"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -304,6 +310,7 @@ trait EncoderMacrosImpl
           // Including it would match the forward-declared helper and create a self-referential loop.
           EncoderHandleAsLiteralTypeRule,
           EncoderUseImplicitWhenAvailableRule,
+          EncoderDerivationPolicyRule,
           EncoderHandleAsValueTypeRule,
           EncoderHandleAsOptionRule,
           // EncoderHandleAsCollectionRule now handles maps too (single IsCollection parse + IsMapOf dispatch),

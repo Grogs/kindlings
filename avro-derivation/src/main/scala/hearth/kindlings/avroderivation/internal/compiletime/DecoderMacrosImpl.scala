@@ -10,6 +10,7 @@ import org.apache.avro.Schema
 
 trait DecoderMacrosImpl
     extends AvroDerivationTimeout
+    with AvroDerivationPolicy
     with hearth.kindlings.derivation.compiletime.MethodFolds
     with rules.AvroDecoderUseCachedDefWhenAvailableRuleImpl
     with rules.AvroDecoderUseImplicitWhenAvailableRuleImpl
@@ -23,8 +24,13 @@ trait DecoderMacrosImpl
     with rules.AvroDecoderHandleAsNamedTupleRuleImpl
     with rules.AvroDecoderHandleAsSingletonRuleImpl
     with rules.AvroDecoderHandleAsCaseClassRuleImpl
-    with rules.AvroDecoderHandleAsEnumRuleImpl {
+    with rules.AvroDecoderHandleAsEnumRuleImpl
+    with rules.AvroDecoderDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & SchemaForMacrosImpl & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "AvroDecoder"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -374,6 +380,7 @@ trait DecoderMacrosImpl
         Rules(
           AvroDecoderHandleAsLiteralTypeRule,
           AvroDecoderUseImplicitWhenAvailableRule,
+          AvroDecoderDerivationPolicyRule,
           AvroDecoderUseBuiltInSupportRule,
           AvroDecoderHandleAsValueTypeRule,
           AvroDecoderHandleAsOptionRule,

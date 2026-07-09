@@ -9,6 +9,7 @@ import hearth.kindlings.xmlderivation.internal.runtime.XmlDerivationUtils
 
 trait EncoderMacrosImpl
     extends XmlDerivationTimeout
+    with XmlDerivationPolicy
     with rules.EncoderUseCachedDefWhenAvailableRuleImpl
     with rules.EncoderUseImplicitWhenAvailableRuleImpl
     with rules.EncoderHandleAsBuiltInRuleImpl
@@ -18,7 +19,12 @@ trait EncoderMacrosImpl
     with rules.EncoderHandleAsCollectionRuleImpl
     with rules.EncoderHandleAsSingletonRuleImpl
     with rules.EncoderHandleAsCaseClassRuleImpl
-    with rules.EncoderHandleAsEnumRuleImpl { this: MacroCommons & StdExtensions & AnnotationSupport =>
+    with rules.EncoderHandleAsEnumRuleImpl
+    with rules.EncoderDerivationPolicyRuleImpl { this: MacroCommons & StdExtensions & AnnotationSupport =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsXmlEncoder"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -303,6 +309,7 @@ trait EncoderMacrosImpl
       .namedScope(s"Deriving XML encoder via rules for type ${Type[A].prettyPrint}") {
         Rules(
           EncoderUseImplicitWhenAvailableRule,
+          EncoderDerivationPolicyRule,
           EncoderHandleAsBuiltInRule,
           EncoderHandleAsValueTypeRule,
           EncoderHandleAsOptionRule,

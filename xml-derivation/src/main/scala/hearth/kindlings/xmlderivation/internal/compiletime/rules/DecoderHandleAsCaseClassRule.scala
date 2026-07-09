@@ -20,7 +20,10 @@ trait DecoderHandleAsCaseClassRuleImpl {
       Log.info(s"Attempting to handle ${Type[A].prettyPrint} as a case class") >> {
         CaseClass.parse[A].toEither match {
           case Right(caseClass) =>
-            decodeCaseClassFields[A](caseClass, caseClass.primaryConstructor.totalParameters.flatten.toList)
+            decodeCaseClassFields[A](
+              caseClass,
+              caseClass.primaryConstructor.totalParameters.flatten.toList
+            )
               .map(Rule.matched)
           case Left(reason) =>
             MIO.pure(Rule.yielded(reason))

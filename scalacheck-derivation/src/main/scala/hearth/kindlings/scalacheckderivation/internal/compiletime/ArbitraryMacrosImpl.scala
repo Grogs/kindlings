@@ -8,6 +8,7 @@ import org.scalacheck.{Arbitrary, Gen}
 
 trait ArbitraryMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
+    with ScalacheckDerivationPolicy
     with hearth.kindlings.derivation.compiletime.MethodFolds
     with rules.ArbitraryUseCachedRuleImpl
     with rules.ArbitraryUseImplicitRuleImpl
@@ -18,7 +19,12 @@ trait ArbitraryMacrosImpl
     with rules.ArbitraryHandleAsCollectionRuleImpl
     with rules.ArbitraryHandleAsSingletonRuleImpl
     with rules.ArbitraryHandleAsCaseClassRuleImpl
-    with rules.ArbitraryHandleAsEnumRuleImpl { this: MacroCommons & StdExtensions & LoadStandardExtensionsOnce =>
+    with rules.ArbitraryHandleAsEnumRuleImpl
+    with rules.ArbitraryDerivationPolicyRuleImpl { this: MacroCommons & StdExtensions & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "Arbitrary"
+  // $COVERAGE-ON$
 
   override protected def derivationSettingsNamespace: String = "scalacheckDerivation"
 
@@ -138,6 +144,7 @@ trait ArbitraryMacrosImpl
       Rules(
         ArbitraryUseCachedRule,
         ArbitraryUseImplicitRule,
+        ArbitraryDerivationPolicyRule,
         ArbitraryBuiltInRule,
         ArbitraryHandleAsValueTypeRule,
         ArbitraryHandleAsOptionRule,

@@ -26,6 +26,7 @@ trait NonEmptyAlternativeMacrosImpl extends CatsDerivationTimeout with CatsDeriv
       NEAFType: Type[cats.NonEmptyAlternative[F]]
   ): Expr[cats.NonEmptyAlternative[F]] = {
     val macroName = "NonEmptyAlternative.derived"
+    enforceDerivationPolicyOrAbort(NEAFType.prettyPrint)
 
     implicit val FCtor: Type.Ctor1[F] = FCtor0
     implicit val NEAFT: Type[cats.NonEmptyAlternative[F]] = NEAFType

@@ -10,7 +10,7 @@ trait EmptyEnumRuleImpl {
 
   object EmptyEnumRule extends EmptyDerivationRule("Empty as enum") {
 
-    @scala.annotation.nowarn("msg=is never used|is unchecked")
+    @scala.annotation.nowarn("msg=is never used|is unchecked|Non local returns")
     def apply[A: EmptyCtx]: MIO[Rule.Applicability[Expr[A]]] =
       Enum.parse[A].toEither match {
         case Right(enumm) =>

@@ -8,6 +8,7 @@ import org.scalacheck.Cogen
 
 trait CogenMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
+    with ScalacheckDerivationPolicy
     with rules.CogenUseCachedRuleImpl
     with rules.CogenUseImplicitRuleImpl
     with rules.CogenBuiltInRuleImpl
@@ -17,7 +18,12 @@ trait CogenMacrosImpl
     with rules.CogenHandleAsCollectionRuleImpl
     with rules.CogenHandleAsSingletonRuleImpl
     with rules.CogenHandleAsCaseClassRuleImpl
-    with rules.CogenHandleAsEnumRuleImpl { this: MacroCommons & StdExtensions & LoadStandardExtensionsOnce =>
+    with rules.CogenHandleAsEnumRuleImpl
+    with rules.CogenDerivationPolicyRuleImpl { this: MacroCommons & StdExtensions & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "Cogen"
+  // $COVERAGE-ON$
 
   override protected def derivationSettingsNamespace: String = "scalacheckDerivation"
 
@@ -113,6 +119,7 @@ trait CogenMacrosImpl
       Rules(
         CogenUseCachedRule,
         CogenUseImplicitRule,
+        CogenDerivationPolicyRule,
         CogenBuiltInRule,
         CogenHandleAsValueTypeRule,
         CogenHandleAsOptionRule,

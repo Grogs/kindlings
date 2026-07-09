@@ -13,6 +13,7 @@ import io.circe.{Decoder, DecodingFailure, HCursor, Json, KeyDecoder}
 
 trait DecoderMacrosImpl
     extends CirceDerivationTimeout
+    with CirceDerivationPolicy
     with hearth.kindlings.derivation.compiletime.MethodFolds
     with hearth.kindlings.derivation.compiletime.EitherFieldsConstruct
     with rules.DecoderUseCachedDefWhenAvailableRuleImpl
@@ -25,8 +26,13 @@ trait DecoderMacrosImpl
     with rules.DecoderHandleAsNamedTupleRuleImpl
     with rules.DecoderHandleAsSingletonRuleImpl
     with rules.DecoderHandleAsCaseClassRuleImpl
-    with rules.DecoderHandleAsEnumRuleImpl {
+    with rules.DecoderHandleAsEnumRuleImpl
+    with rules.DecoderDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsDecoder"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -404,6 +410,7 @@ trait DecoderMacrosImpl
           DecoderUseCachedDefWhenAvailableRule,
           DecoderHandleAsLiteralTypeRule,
           DecoderUseImplicitWhenAvailableRule,
+          DecoderDerivationPolicyRule,
           DecoderHandleAsValueTypeRule,
           DecoderHandleAsOptionRule,
           // DecoderHandleAsCollectionRule now handles maps too (single IsCollection parse + IsMapOf dispatch),

@@ -24,6 +24,7 @@ trait NonEmptyTraverseMacrosImpl extends CatsDerivationTimeout with CatsDerivati
       NETFType: Type[cats.NonEmptyTraverse[F]]
   ): Expr[cats.NonEmptyTraverse[F]] = {
     val macroName = "NonEmptyTraverse.derived"
+    enforceDerivationPolicyOrAbort(NETFType.prettyPrint)
 
     implicit val FCtor: Type.Ctor1[F] = FCtor0
     implicit val NETFT: Type[cats.NonEmptyTraverse[F]] = NETFType

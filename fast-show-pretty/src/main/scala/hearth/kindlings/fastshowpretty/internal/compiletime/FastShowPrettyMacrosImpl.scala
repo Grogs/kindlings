@@ -8,6 +8,7 @@ import hearth.kindlings.fastshowpretty.{FastShowPretty, RenderConfig}
 
 trait FastShowPrettyMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
+    with hearth.kindlings.derivation.compiletime.DerivationPolicy
     with AnnotationSupport
     with rules.FastShowPrettyUseCachedDefWhenAvailableRuleImpl
     with rules.FastShowPrettyUseImplicitWhenAvailableRuleImpl
@@ -19,9 +20,24 @@ trait FastShowPrettyMacrosImpl
     with rules.FastShowPrettyHandleAsNamedTupleRuleImpl
     with rules.FastShowPrettyHandleAsSingletonRuleImpl
     with rules.FastShowPrettyHandleAsCaseClassRuleImpl
-    with rules.FastShowPrettyHandleAsEnumRuleImpl { this: MacroCommons & StdExtensions =>
+    with rules.FastShowPrettyHandleAsEnumRuleImpl
+    with rules.FastShowPrettyDerivationPolicyRuleImpl { this: MacroCommons & StdExtensions =>
 
   override protected def derivationSettingsNamespace: String = "fastShowPrettyDerivation"
+
+  // Derivation policy (issue kubuszok/kindlings#85)
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "FastShowPretty"
+  // $COVERAGE-ON$
+
+  override protected def derivationOptInImportHint: String =
+    "import hearth.kindlings.fastshowpretty.policy.allowDerivationForFastShowPretty"
+
+  override protected def isDerivationOptInMarkerInScope: Boolean = {
+    implicit val AllowDerivation: Type[FastShowPretty.AllowDerivation] = Types.AllowDerivation
+    Expr.summonImplicit[FastShowPretty.AllowDerivation].isDefined
+  }
 
   // Entrypoints to the macro
 
@@ -277,6 +293,8 @@ trait FastShowPrettyMacrosImpl
     def FastShowPretty: Type.Ctor1[FastShowPretty] = Type.Ctor1.of[FastShowPretty]
     val LogDerivation: Type[hearth.kindlings.fastshowpretty.FastShowPretty.LogDerivation] =
       Type.of[hearth.kindlings.fastshowpretty.FastShowPretty.LogDerivation]
+    val AllowDerivation: Type[hearth.kindlings.fastshowpretty.FastShowPretty.AllowDerivation] =
+      Type.of[hearth.kindlings.fastshowpretty.FastShowPretty.AllowDerivation]
     val StringBuilder: Type[StringBuilder] = Type.of[StringBuilder]
     val RenderConfig: Type[RenderConfig] = Type.of[RenderConfig]
 
@@ -347,6 +365,7 @@ trait FastShowPrettyMacrosImpl
       .namedScope(s"Deriving for type ${Type[A].prettyPrint}") {
         Rules(
           FastShowPrettyUseImplicitWhenAvailableRule,
+          FastShowPrettyDerivationPolicyRule,
           FastShowPrettyUseBuiltInSupportRule,
           FastShowPrettyHandleAsValueTypeRule,
           FastShowPrettyHandleAsOptionRule,

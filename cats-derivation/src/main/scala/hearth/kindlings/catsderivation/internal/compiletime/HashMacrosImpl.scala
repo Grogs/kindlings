@@ -34,6 +34,7 @@ import hearth.std.*
 trait HashMacrosImpl
     extends EqMacrosImpl
     with StrictDerivationSupport
+    with rules.HashDerivationPolicyRuleImpl
     with rules.HashUseCachedRuleImpl
     with rules.HashUseImplicitRuleImpl
     with rules.HashBuiltInRuleImpl
@@ -209,6 +210,7 @@ trait HashMacrosImpl
       Rules(
         HashUseCachedRule,
         HashUseImplicitRule,
+        HashDerivationPolicyRule,
         HashBuiltInRule,
         HashSingletonRule,
         HashCaseClassRule,

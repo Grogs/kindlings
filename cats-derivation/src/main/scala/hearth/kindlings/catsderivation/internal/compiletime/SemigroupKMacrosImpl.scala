@@ -18,6 +18,7 @@ trait SemigroupKMacrosImpl extends CatsDerivationTimeout with CatsDerivationErro
       SemigroupKFType: Type[cats.SemigroupK[F]]
   ): Expr[cats.SemigroupK[F]] = {
     val macroName = "SemigroupK.derived"
+    enforceDerivationPolicyOrAbort(SemigroupKFType.prettyPrint)
 
     implicit val FCtor: Type.Ctor1[F] = FCtor0
     implicit val SemigroupKFT: Type[cats.SemigroupK[F]] = SemigroupKFType

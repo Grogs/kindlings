@@ -8,6 +8,7 @@ import hearth.std.*
 trait MonoidMacrosImpl
     extends SemigroupMacrosImpl
     with StrictDerivationSupport
+    with rules.MonoidDerivationPolicyRuleImpl
     with rules.MonoidUseCachedRuleImpl
     with rules.MonoidUseImplicitRuleImpl
     with rules.MonoidBuiltInRuleImpl
@@ -42,6 +43,7 @@ trait MonoidMacrosImpl
       Rules(
         MonoidUseCachedRule,
         MonoidUseImplicitRule,
+        MonoidDerivationPolicyRule,
         MonoidBuiltInRule,
         MonoidCaseClassRule
       )(_[A]).flatMap {

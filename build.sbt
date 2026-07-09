@@ -125,7 +125,10 @@ val settings = Seq(
       "-Ywarn-dead-code",
       "-Ywarn-numeric-widen",
       "-Ywarn-unused:locals",
-      "-Ywarn-unused:imports",
+      // "-Ywarn-unused:imports", // with -Ywarn-macros:after below, an import that only feeds a macro (e.g. the
+      // package-object `.modify` DSL in BareImportSpec) is flagged unused because Hearth fully-qualifies references in
+      // the expanded tree (hearth#320, a correctness fix for cross-unit quotes) — same used-but-flagged-unused class
+      // that already made us drop `-Wunused:imports` on Scala 3 (see the Scala 3 options above).
       "-Ywarn-macros:after",
       "-Xsource-features:eta-expand-always", // silence warn that appears since 2.13.17
       "-Ytasty-reader"
@@ -181,6 +184,7 @@ val noPublishSettings =
 lazy val aliases = new Aliases(
   published = Seq(
     derivationCommons,
+    macroCommons,
     fastShowPretty,
     circeDerivation,
     jsoniterDerivation,
@@ -207,7 +211,7 @@ lazy val aliases = new Aliases(
     tapirOpenapiJsoniter,
     optics
   ),
-  testOnly = Seq(integrationTests),
+  testOnly = Seq(integrationTests, derivationPolicyTests),
   compileOnly = Seq(benchmarks)
 )
 
@@ -268,6 +272,7 @@ lazy val root = project
   .settings(publishSettings)
   .settings(noPublishSettings)
   .aggregate(derivationCommons.projectRefs *)
+  .aggregate(macroCommons.projectRefs *)
   .aggregate(fastShowPretty.projectRefs *)
   .aggregate(circeDerivation.projectRefs *)
   .aggregate(jsoniterDerivation.projectRefs *)
@@ -294,6 +299,7 @@ lazy val root = project
   .aggregate(optics.projectRefs *)
   .aggregate(tapirOpenapiJsoniter.projectRefs *)
   .aggregate(integrationTests.projectRefs *)
+  .aggregate(derivationPolicyTests.projectRefs *)
   .aggregate(benchmarks.projectRefs *)
   .settings(
     moduleName := "kindlings",
@@ -322,6 +328,7 @@ lazy val di = projectMatrix
   .someVariations(versions.scalas, versions.platforms)(
     (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
   )
+  .dependsOn(macroCommons)
   .settings(
     moduleName := "kindlings-di",
     name := "kindlings-di",
@@ -339,7 +346,7 @@ lazy val diCats = projectMatrix
   // JVM + JS only: cats-effect for Scala Native 0.5 is published from 3.7.0+, but we pin 3.6.3 (which has no
   // `cats-effect_native0.5_3` artifact). Add `VirtualAxis.native` here once the cats-effect pin moves to >= 3.7.0.
   .someVariations(versions.scalas, List(VirtualAxis.jvm, VirtualAxis.js))((useCrossQuotes ++ dev.only1VersionInIDE) *)
-  .dependsOn(di)
+  .dependsOn(di, macroCommons)
   .settings(
     moduleName := "kindlings-di-cats",
     name := "kindlings-di-cats",
@@ -362,6 +369,7 @@ lazy val optics = projectMatrix
   // cats-integration is a TEST dependency only: its `IsCollection`/`IsMap` providers are loaded from the classpath by
   // `loadStandardExtensions`, demonstrating that `.each` lights up over cats `NonEmpty*` purely because the provider
   // jar is present — no optics-specific cats code (see `CatsEachSpec`).
+  .dependsOn(macroCommons)
   .dependsOn(catsIntegration % Test)
   .settings(
     moduleName := "kindlings-optics",
@@ -377,6 +385,7 @@ lazy val mock = projectMatrix
   .someVariations(versions.scalas, versions.platforms)(
     (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
   )
+  .dependsOn(macroCommons)
   .settings(
     moduleName := "kindlings-mock",
     name := "kindlings-mock",
@@ -668,6 +677,24 @@ lazy val derivationCommons = projectMatrix
   .settings(dependencies *)
   .settings(publishSettings *)
 
+// Shared compile-time utilities for the NON-derivation, direct-style macro modules (optics, mock, di).
+// Kept separate from `derivation-commons` because those modules are not derivations and must not pull in
+// the derivation-specific machinery (DerivationPolicy/DerivationTimeout/...). Currently hosts the opt-in
+// generation-logging tracer (GenerationLogging).
+lazy val macroCommons = projectMatrix
+  .in(file("macro-commons"))
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
+  .settings(
+    moduleName := "kindlings-macro-commons",
+    name := "kindlings-macro-commons",
+    description := "Shared compile-time utilities for Kindlings direct-style (non-derivation) macro modules"
+  )
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(publishSettings *)
+
 lazy val jsonSchemaConfigMacroProviders = projectMatrix
   .in(file("json-schema-config-macro-providers"))
   .someVariations(versions.scalas, versions.platforms)(
@@ -882,6 +909,33 @@ lazy val integrationTests = projectMatrix
     libraryDependencies ++= foldVersion(scalaVersion.value)(
       for3 = Seq("io.github.iltotore" %% "iron" % versions.iron),
       for2_13 = Seq.empty
+    )
+  )
+
+lazy val derivationPolicyTests = projectMatrix
+  .in(file("derivation-policy-tests"))
+  .someVariations(versions.scalas, versions.platforms)(
+    (useCrossQuotes ++ dev.only1VersionInIDE ++ nativeEvictionWarn) *
+  )
+  .dependsOn(fastShowPretty, circeDerivation, jsoniterDerivation)
+  .settings(noPublishSettings *)
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(
+    moduleName := "kindlings-derivation-policy-tests",
+    name := "kindlings-derivation-policy-tests",
+    description := "Integration tests for the Kindlings derivation policy (issue #85)",
+    // The policy is global per compilation unit, so a single -Xmacro-settings config drives the whole module.
+    // Separate entries use ';' (never ',', which the Scala 3 compiler would split inside one option).
+    // fastShowPretty: opt-in with an allowed scope + opt-in-by-import (positive cases compile in those scopes).
+    // circe / jsoniter: opt-in with NO allowed scope so any derivation in this module is denied (negative cases only,
+    // asserted via compileErrors) — proves the gate fires in real codec modules across the encoder/decoder/codec shapes.
+    Test / scalacOptions ++= Seq(
+      "-Xmacro-settings:fastShowPrettyDerivation.policy.enabled=opt-in",
+      "-Xmacro-settings:fastShowPrettyDerivation.policy.allowedScopes=hearth.kindlings.policytest.allowed",
+      "-Xmacro-settings:fastShowPrettyDerivation.policy.optInByImport=true",
+      "-Xmacro-settings:circeDerivation.policy.enabled=opt-in",
+      "-Xmacro-settings:jsoniterDerivation.policy.enabled=opt-in"
     )
   )
 

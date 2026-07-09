@@ -9,6 +9,7 @@ import hearth.kindlings.catsderivation.LogDerivation
 /** Empty derivation: product (all fields: Empty) and coproduct (exactly one variant: Empty). */
 trait EmptyMacrosImpl
     extends StrictDerivationSupport
+    with rules.EmptyDerivationPolicyRuleImpl
     with rules.EmptyUseCachedRuleImpl
     with rules.EmptyUseImplicitRuleImpl
     with rules.EmptyBuiltInRuleImpl
@@ -96,6 +97,7 @@ trait EmptyMacrosImpl
       Rules(
         EmptyUseCachedRule,
         EmptyUseImplicitRule,
+        EmptyDerivationPolicyRule,
         EmptyBuiltInRule,
         EmptyCaseClassRule,
         EmptyEnumRule

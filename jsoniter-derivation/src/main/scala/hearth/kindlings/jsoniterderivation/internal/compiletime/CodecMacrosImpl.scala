@@ -20,6 +20,7 @@ import com.github.plokhotnyuk.jsoniter_scala.core.{
 trait CodecMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
     with hearth.kindlings.derivation.compiletime.MethodFolds
+    with JsoniterDerivationPolicy
     with rules.EncoderUseCachedDefWhenAvailableRuleImpl
     with rules.EncoderUseImplicitWhenAvailableRuleImpl
     with rules.EncoderHandleAsLiteralTypeRuleImpl
@@ -45,7 +46,13 @@ trait CodecMacrosImpl
     with rules.DecoderHandleAsOneValueClassRuleImpl
     with rules.DecoderHandleAsSingletonRuleImpl
     with rules.DecoderHandleAsCaseClassRuleImpl
-    with rules.DecoderHandleAsEnumRuleImpl { this: MacroCommons & StdExtensions & AnnotationSupport =>
+    with rules.DecoderHandleAsEnumRuleImpl
+    with rules.EncoderDerivationPolicyRuleImpl
+    with rules.DecoderDerivationPolicyRuleImpl { this: MacroCommons & StdExtensions & AnnotationSupport =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "KindlingsJsonValueCodec"
+  // $COVERAGE-ON$
 
   override protected def derivationSettingsNamespace: String = "jsoniterDerivation"
 
@@ -899,6 +906,7 @@ trait CodecMacrosImpl
           // included here because caching is handled by derive*Recursively (which wraps in setHelper).
           EncoderHandleAsLiteralTypeRule,
           EncoderUseImplicitWhenAvailableRule,
+          EncoderDerivationPolicyRule,
           EncoderHandleAsBuiltInRule,
           EncoderHandleAsValueTypeRule,
           EncoderHandleAsOptionRule,
@@ -1088,6 +1096,7 @@ trait CodecMacrosImpl
           // included here because caching is handled by derive*Recursively (which wraps in setHelper).
           DecoderHandleAsLiteralTypeRule,
           DecoderUseImplicitWhenAvailableRule,
+          DecoderDerivationPolicyRule,
           DecoderHandleAsBuiltInRule,
           DecoderHandleAsValueTypeRule,
           DecoderHandleAsOptionRule,

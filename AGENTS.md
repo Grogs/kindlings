@@ -128,6 +128,23 @@ Supported formats: plain integer (seconds), `Ns`/`Nseconds`, `Nms`/`Nmillisecond
 Each module reads from its own settings namespace (e.g. `jsoniterDerivation`, `catsDerivation`).
 Invalid values emit a compiler warning and fall back to default.
 
+## Configurable derivation policy (issue #85)
+
+Global, per-library opt-out of automatic (structural) derivation. Shared mechanism in `derivation-commons`
+(`hearth.kindlings.derivation.compiletime.DerivationPolicy`), reusing the same `derivationSettingsNamespace` as the
+timeout. Keys: `<ns>.policy.enabled=always-allowed|opt-in` (default `always-allowed`),
+`<ns>.policy.allowedScopes=<fqn>[;<fqn>]` (package-prefix aware; split on `;`/`|`, **never `,`** — Scala 3 splits a
+single `-Xmacro-settings` option on commas, Scala 2 does not), `<ns>.policy.optInByImport=true|false` (default `true`).
+Enforced once per macro expansion by a single root rule (`checkDerivationPolicyOncePerExpansion`) inserted into each
+`Rules(...)` chain right after the use-implicit/use-cached rules and before any derivation rule — so found implicits,
+cached recursive types, built-ins, collections, value types, etc. stay unconditional. Polymorphic (HKT) derivations
+without a `*`-kinded rule chain (cats/cats-tagless `deriveXxx[F]`) instead call `enforceDerivationPolicyOrAbort` once at
+the entry point. Opt-in-by-import
+uses an `AllowDerivation` marker (parallel to `LogDerivation`) exposed from each module's `policy` package object.
+To wire it into a module, follow `docs/contributing/kindlings-derivation-policy/SKILL.md`. Reference impl:
+`fast-show-pretty`. Tested in `derivation-commons` (`DerivationPolicySpec`, pure logic) and the `derivation-policy-tests`
+module (end-to-end). User docs: `docs/user-guide/derivation-policy.md` + FAQ.
+
 Hearth source is at `../hearth/` when documentation is insufficient.
 See `docs/contributing/hearth-documentation/SKILL.md` § "Hearth source as reference" for key files.
 
@@ -147,6 +164,7 @@ See `docs/contributing/hearth-documentation/SKILL.md` § "Hearth source as refer
 - `docs/contributing/hearth-hkt-derivation/SKILL.md` — polymorphic (HKT) derivation, erased approach
 - `docs/contributing/kindlings-new-module/SKILL.md` — bootstrapping a new module, requirements checklist
 - `docs/contributing/kindlings-debugging/SKILL.md` — debugging derivation, logging, error hierarchy
+- `docs/contributing/kindlings-derivation-policy/SKILL.md` — wiring the per-library derivation policy (issue #85): `AllowDerivation` marker, `policy` package object, gating the structural rules
 
 Reference implementations:
 - `FastShowPrettyMacrosImpl.scala` — **encoder-style** derivation (reading fields)

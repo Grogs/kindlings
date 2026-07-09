@@ -28,6 +28,7 @@ import org.apache.avro.Schema
 
 trait SchemaForMacrosImpl
     extends AvroDerivationTimeout
+    with AvroDerivationPolicy
     with rules.AvroSchemaForUseCachedDefWhenAvailableRuleImpl
     with rules.AvroSchemaForCheckSelfRecordRuleImpl
     with rules.AvroSchemaForUseImplicitWhenAvailableRuleImpl
@@ -41,8 +42,13 @@ trait SchemaForMacrosImpl
     with rules.AvroSchemaForHandleAsNamedTupleRuleImpl
     with rules.AvroSchemaForHandleAsSingletonRuleImpl
     with rules.AvroSchemaForHandleAsCaseClassRuleImpl
-    with rules.AvroSchemaForHandleAsEnumRuleImpl {
+    with rules.AvroSchemaForHandleAsEnumRuleImpl
+    with rules.AvroSchemaForDerivationPolicyRuleImpl {
   this: MacroCommons & StdExtensions & AnnotationSupport & LoadStandardExtensionsOnce =>
+
+  // $COVERAGE-OFF$
+  override protected def derivationPolicyTypeClassName: String = "AvroSchemaFor"
+  // $COVERAGE-ON$
 
   // Entrypoints
 
@@ -258,7 +264,16 @@ trait SchemaForMacrosImpl
   def deriveSelfContainedSchema[B: Type](config: Expr[AvroConfig]): MIO[Expr[Schema]] = {
     val evConfig: Option[AvroConfig] = config.semiEval.toOption
     val localCache = ValDefsCache.mlocal
-    val ctx = SchemaForCtx[B](Type[B], config, localCache, derivedType = None, evaluatedConfig = evConfig)
+    // Mark `B` as the type being derived so `AvroSchemaForUseImplicitWhenAvailableRule` skips the implicit
+    // search for the *root* type and derives it structurally. Without this, a `derives AvroEncoder`/`AvroDecoder`
+    // clause on `B` puts a companion `derived$AvroEncoder: AvroEncoder[B]` given in scope — and since
+    // `AvroEncoder[B] <: AvroSchemaFor[B]`, summoning `AvroSchemaFor[B]` for the root finds that given and emits
+    // `derived$AvroEncoder(...).schema`, i.e. the instance summons its own schema → infinite recursion (a runtime
+    // StackOverflow for generic `B`). Nested field/child types still resolve implicits normally (their type differs
+    // from `B`), so an in-scope `AvroEncoder`/`AvroDecoder` for a *field* is still reused as its schema source.
+    // Mirrors `deriveSchemaForTypeClass`, the real `AvroSchemaFor.derived` entry, which already passes `selfType`.
+    val ctx =
+      SchemaForCtx[B](Type[B], config, localCache, derivedType = Some(Type[B].as_??), evaluatedConfig = evConfig)
     for {
       _ <- ensureStandardExtensionsLoaded()
       result <- deriveSchemaRecursively[B](using ctx)
@@ -284,6 +299,7 @@ trait SchemaForMacrosImpl
           AvroSchemaForCheckSelfRecordRule,
           AvroSchemaForHandleAsLiteralTypeRule,
           AvroSchemaForUseImplicitWhenAvailableRule,
+          AvroSchemaForDerivationPolicyRule,
           AvroSchemaForUseBuiltInSupportRule,
           AvroSchemaForHandleAsValueTypeRule,
           AvroSchemaForHandleAsOptionRule,

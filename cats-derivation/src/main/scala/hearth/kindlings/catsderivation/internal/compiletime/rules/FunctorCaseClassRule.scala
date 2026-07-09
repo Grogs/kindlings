@@ -103,7 +103,9 @@ trait FunctorCaseClassRuleImpl {
         }
       } else {
         val directFieldSet: Set[String] = directFields.toSet
-        MIO.pure(Rule.matched(FunctorCaseClassResult(FCtor, directFieldSet, Map.empty)))
+        MIO.pure(
+          Rule.matched(FunctorCaseClassResult(FCtor, directFieldSet, Map.empty))
+        )
       }
     }
   }
