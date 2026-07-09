@@ -650,6 +650,21 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val result = handler.readDocument(doc)
         assert(result.isFailure, "Should fail when unknown field is present")
       }
+
+      test("runtime field-name mapper fallback captures call-site values") {
+        def handlerWithPrefix(prefix: String): KindlingsBsonDocumentHandler[Person] = {
+          implicit val config: BsonDocumentHandlerConfig =
+            BsonDocumentHandlerConfig().withFieldNameMapper(name => prefix + name)
+          KindlingsBsonDocumentHandler.derived[Person]
+        }
+
+        val handler = handlerWithPrefix("db_")
+        val value = Person("Alice", 30)
+        val document = BSONDocument("db_name" -> "Alice", "db_age" -> 30)
+
+        assertEquals(handler.writeTry(value).get, document)
+        assertEquals(handler.readDocument(document).get, value)
+      }
     }
 
     group("reference ported tests") {

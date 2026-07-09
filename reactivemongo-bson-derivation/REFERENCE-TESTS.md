@@ -52,10 +52,11 @@ that are not part of `KindlingsBsonDocumentHandler`.
 
 ### Configuration resolution (`"Configuration"`)
 
-**Partially ported.** Our config is passed as an implicit `BsonDocumentHandlerConfig`
-(similar to reference's implicit `MacroConfiguration`). We do not have separate
-tests for "resolved from call site" vs "resolved from implicit scope" because our
-API has a single `derived[A](using config)` entry point.
+**Ported / adapted.** Our config is passed as an implicit `BsonDocumentHandlerConfig`
+(similar to reference's implicit `MacroConfiguration`) through a single
+`derived[A](using config)` entry point. The field-naming tests cover evaluable
+configs, while `runtime field-name mapper fallback captures call-site values`
+verifies the non-evaluable call-site fallback.
 
 ### Reader / Writer sections
 
@@ -114,8 +115,8 @@ than the reference (see `REFERENCE-COMPARISON.md` #3).
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~28 top-level behaviors (70 tests in our suite).
+- **Ported / adapted**: ~29 top-level behaviors (71 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 70 tests currently passing.
+- **Test suite**: 71 tests currently passing.
