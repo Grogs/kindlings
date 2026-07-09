@@ -1,6 +1,8 @@
 # ReactiveMongo BSON Derivation
 
-Derives `BSONDocumentHandler[A]` (read + write) for case classes, sealed traits, Scala 3 enums, value types, options, and collections — built on [Hearth](https://github.com/kubuszok/hearth/) for cross-compiled macro derivation.
+Drop-in replacement for ReactiveMongo BSON macros — derives standard `BSONDocumentHandler` instances for case classes, sealed traits, Scala 3 enums, value types, options, collections, and maps.
+
+Derived `KindlingsBsonDocumentHandler[A]` instances extend ReactiveMongo's `BSONDocumentHandler[A]`, so they can be passed anywhere a `BSONDocumentHandler`, `BSONDocumentReader`, `BSONDocumentWriter`, `BSONReader`, or `BSONWriter` is required.
 
 ## Installation
 
@@ -10,186 +12,121 @@ Derives `BSONDocumentHandler[A]` (read + write) for case classes, sealed traits,
     libraryDependencies += "com.kubuszok" %% "kindlings-reactivemongo-bson-derivation" % "{{ kindlings_version() }}"
     ```
 
-    JVM-only (reactivemongo-bson-api is not published for Scala.js / Scala Native):
-
-    ```scala
-    libraryDependencies += "com.kubuszok" %% "kindlings-reactivemongo-bson-derivation" % "{{ kindlings_version() }}"
-    ```
+!!! note
+    This is a JVM-only module because `reactivemongo-bson-api` is JVM-only.
 
 ## Quick start
 
 ```scala
+//> using scala {{ scala.2_13 }}
+//> using dep com.kubuszok::kindlings-reactivemongo-bson-derivation:{{ kindlings_version() }}
+//> using dep com.kubuszok::kindlings-fast-show-pretty:{{ kindlings_version() }}
+
+import hearth.kindlings.fastshowpretty._
 import hearth.kindlings.reactivemongobsonderivation._
+import reactivemongo.api.bson.{ BSONDocument, BSONDocumentHandler }
 
 case class Person(name: String, age: Int)
 
-val handler: KindlingsBsonDocumentHandler[Person] = KindlingsBsonDocumentHandler.derived[Person]
+implicit val handler: BSONDocumentHandler[Person] =
+  KindlingsBsonDocumentHandler.derived[Person]
 
-val written = handler.writeTry(Person("Alice", 30)).get
-// BSONDocument("name" -> "Alice", "age" -> 30)
+val document = handler.writeTry(Person("Alice", 30)).get
+assert(document == BSONDocument("name" -> "Alice", "age" -> 30))
 
-val read = handler.readDocument(written).get
-// Person("Alice", 30)
+println(FastShowPretty.render(handler.readDocument(document).get, RenderConfig.Default))
+// expected output:
+// Person(
+//   name = "Alice",
+//   age = 30
+// )
 ```
 
-The `derived` macro picks up the implicit `BsonDocumentHandlerConfig` from scope. With no config in scope, it uses the default (see [Configuration](#configuration)).
+`derived[A]` also supports sanely-automatic derivation: place a derived instance in a companion object or implicit scope and it is used for nested fields.
 
 ## Supported types
 
 | Type | Notes |
-|------|-------|
-| Case classes | All primitive fields, nested case classes, generics |
-| Sealed traits / Scala 3 enums | Discriminator field `"className"` (full type name by default, e.g. `"com.example.Tree.Leaf"`) |
-| Options | `None` decodes from missing field or `BSONNull` |
-| `AnyVal` value types | Treated as their underlying type |
-| Collections | `List`, `Seq`, `Vector`, `Set`, `Array` |
-| Maps | `Map[K, V]` (any key type with `KeyReader[K]`/`KeyWriter[K]`) |
-| Default field values | Applied when field is missing on read; `@DefaultValue` for per-field override |
-| `@FieldName` / `@NoneAsNull` / `@Reader` / `@Writer` / `@Flatten` | Per-field annotations supported |
-| Field naming | `String => String` or structured `FieldNaming` |
+|---|---|
+| Case classes | Including nested and generic case classes |
+| Sealed traits and Scala 3 enums | Uses a BSON discriminator |
+| `Option[A]` | Missing fields and `BSONNull` decode as `None` |
+| `AnyVal` value classes | Encoded as their underlying value |
+| Collections | `List`, `Seq`, `Vector`, `Set`, `Array`, and standard supported collection types |
+| Maps | `Map[K, V]`; non-`String` keys need both `KeyReader[K]` and `KeyWriter[K]` |
+| Existing BSON codecs | User-provided `BSONReader[A]` and `BSONWriter[A]` take precedence |
 
 ## Configuration
 
-Customize derivation with `BsonDocumentHandlerConfig`:
+`BsonDocumentHandlerConfig` is resolved from implicit scope. Its default configuration uses identity field names, the `"className"` discriminator field, fully-qualified subtype names, and ignores unexpected BSON fields while decoding.
 
 ```scala
 import hearth.kindlings.reactivemongobsonderivation._
 
-val customConfig = BsonDocumentHandlerConfig()
-  .withSnakeCaseFieldNames
-  .withDiscriminatorFieldName("type")
-  .withSkipUnexpectedFields(true)
-
-given BsonDocumentHandlerConfig = customConfig
-val handler = KindlingsBsonDocumentHandler.derived[Person]
+implicit val config: BsonDocumentHandlerConfig =
+  BsonDocumentHandlerConfig.default
+    .withSnakeCaseFieldNames
+    .withDiscriminatorFieldName("type")
+    .withTypeNaming(TypeNaming.SimpleName)
+    .withSkipUnexpectedFields(false)
 ```
 
-### Field naming
+| Method | Effect |
+|---|---|
+| `withFieldNameMapper(f)` | Use an arbitrary field-name mapping function |
+| `withFieldNaming(FieldNaming.SnakeCase)` | Use a structured field-name strategy |
+| `withSnakeCaseFieldNames`, `withKebabCaseFieldNames`, `withPascalCaseFieldNames` | Common field-name mappings |
+| `withDiscriminatorFieldName(name)` | Set the sealed-ADT discriminator field |
+| `withoutDiscriminator` | Use wrapper-style sealed-ADT encoding |
+| `withTypeNaming(TypeNaming.SimpleName)` | Use short subtype names instead of the default fully-qualified names |
+| `withSkipUnexpectedFields(false)` | Fail decoding when the document contains unknown fields |
 
-Transform field names during read and write. Default: identity.
+`FieldNaming` provides `Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, and `Custom`. `TypeNaming` provides `FullName`, `SimpleName`, and `Custom`.
 
-Use the helpers on `BsonDocumentHandlerConfig`:
+## Field annotations
 
-```scala
-case class CamelCaseFields(firstName: String, lastName: String, ageInYears: Int)
+Import annotations from `hearth.kindlings.reactivemongobsonderivation.annotations`.
 
-given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withSnakeCaseFieldNames
-val handler = KindlingsBsonDocumentHandler.derived[CamelCaseFields]
+| Annotation | Effect |
+|---|---|
+| `@FieldName("key")` | Override the BSON key for one field |
+| `@NoneAsNull` | Write a `None` option as `BSONNull`; otherwise it is omitted |
+| `@DefaultValue(value)` | Value to use when the BSON field is missing |
+| `@Ignore` | Omit a field on write; it must have a Scala default or `@DefaultValue` for decoding |
+| `@Reader(reader)` | Use this `BSONReader` for the field |
+| `@Writer(writer)` | Use this `BSONWriter` for the field |
+| `@Flatten` | Read/write a nested document's elements directly in the enclosing document |
 
-handler.writeTry(CamelCaseFields("Alice", "Smith", 30)).get
-// BSONDocument("first_name" -> "Alice", "last_name" -> "Smith", "age_in_years" -> 30)
-```
-
-Available helpers:
-- `withFieldNameMapper(f: String => String)` — arbitrary function
-- `withFieldNaming(naming: FieldNaming)` — structured strategy (see below)
-- `withSnakeCaseFieldNames`
-- `withKebabCaseFieldNames`
-- `withPascalCaseFieldNames`
-
-#### `FieldNaming` structured API
-
-For users migrating from ReactiveMongo-BSON, a structured `FieldNaming` trait is available:
-
-```scala
-import hearth.kindlings.reactivemongobsonderivation.FieldNaming
-
-given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withFieldNaming(FieldNaming.SnakeCase)
-```
-
-Variants: `Identity`, `SnakeCase`, `PascalCase`, `KebabCase`, and `Custom(f)`.
-
-### `discriminatorFieldName: Option[String]`
-
-The field name used for sealed-trait / enum discrimination. Default: `Some("className")` (aligned with ReactiveMongo-BSON).
-
-Set to `None` to use wrapper-style encoding instead of discriminator-style:
+### Field names, defaults, and options
 
 ```scala
-given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withoutDiscriminator
-```
+import hearth.kindlings.reactivemongobsonderivation._
+import hearth.kindlings.reactivemongobsonderivation.annotations.{ DefaultValue, FieldName, NoneAsNull }
 
-### `typeNaming: TypeNaming`
-
-Controls how sealed-trait / enum case types are mapped to discriminator values. Default: `TypeNaming.SimpleName`.
-
-```scala
-import hearth.kindlings.reactivemongobsonderivation.TypeNaming
-
-// Use the full type name (e.g. com.example.MyModule.Leaf)
-given BsonDocumentHandlerConfig = BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.FullName)
-
-// Custom transformation of the simple name
-given BsonDocumentHandlerConfig =
-  BsonDocumentHandlerConfig().withTypeNaming(TypeNaming.Custom(_.toLowerCase))
-```
-
-### `skipUnexpectedFields: Boolean`
-
-If `true` (default), unknown BSON fields are silently ignored on read. If `false`, an `IllegalArgumentException` is returned in the `Try` listing the unexpected field names.
-
-## Annotations
-
-### `@FieldName`
-
-Override the BSON key for a specific field. Takes precedence over `fieldNameMapper`.
-
-```scala
-import hearth.kindlings.reactivemongobsonderivation.annotations.FieldName
-
-case class User(
+case class Account(
   @FieldName("user_id") id: String,
-  @FieldName("created_at") createdAt: Long
-)
-```
-
-### `@NoneAsNull`
-
-By default, `None` values are omitted from the written document. Annotate an `Option` field with `@NoneAsNull` to write `None` as `BSONNull` instead.
-
-```scala
-import hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull
-
-case class Record(
-  name: String,
-  @NoneAsNull description: Option[String]
+  @DefaultValue(3) retries: Int,
+  @NoneAsNull note: Option[String]
 )
 
-val handler = KindlingsBsonDocumentHandler.derived[Record]
-handler.writeTry(Record("x", None)).get
-// BSONDocument("name" -> "x", "description" -> BSONNull)
+val handler = KindlingsBsonDocumentHandler.derived[Account]
+handler.writeTry(Account("a-1", 3, None)).get
+// BSONDocument("user_id" -> "a-1", "retries" -> 3, "note" -> BSONNull)
 ```
 
-On read, `BSONNull` is always decoded as `None`, whether or not the annotation is present.
+A Scala constructor default and `@DefaultValue` are applied when the corresponding BSON field is absent. `BSONNull` always decodes as `None` for an `Option` field.
 
-### `@DefaultValue`
+### Custom field codecs
 
-Provide a default value for a field that doesn't have a Scala-level default. Applied when the field is missing on read.
-
-```scala
-import hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue
-
-case class Config(
-  name: String,
-  @DefaultValue(8080) port: Int
-)
-
-val handler = KindlingsBsonDocumentHandler.derived[Config]
-handler.readDocument(BSONDocument("name" -> "app")).get
-// Config("app", 8080)
-```
-
-### `@Reader` and `@Writer`
-
-Override the BSON reader or writer for a specific field. Useful when a field needs a custom codec without defining an implicit for the whole type.
+`@Reader` and `@Writer` take codec *values*. This makes the selected codec explicit and local to the field.
 
 ```scala
-import reactivemongo.api.bson.{ BSONReader, BSONWriter }
-import hearth.kindlings.reactivemongobsonderivation.annotations.{ reader, writer }
+import hearth.kindlings.reactivemongobsonderivation.annotations.{ Reader, Writer }
+import reactivemongo.api.bson.{ BSONReader, BSONString, BSONWriter }
 
 object codecs {
-  implicit val upperReader: BSONReader[String] = BSONReader.collect { case reactivemongo.api.bson.BSONString(s) => s.toUpperCase }
-  implicit val lowerWriter: BSONWriter[String] = BSONWriter[String](s => reactivemongo.api.bson.BSONString(s.toLowerCase))
+  implicit val upperReader: BSONReader[String] = BSONReader.collect { case BSONString(value) => value.toUpperCase }
+  implicit val lowerWriter: BSONWriter[String] = BSONWriter[String](value => BSONString(value.toLowerCase))
 }
 
 case class Styled(
@@ -198,70 +135,88 @@ case class Styled(
 )
 ```
 
-### `@Flatten`
+Use at most one `@Reader` and one `@Writer` per field. An annotation whose codec has the wrong field type is rejected during derivation.
 
-Flatten a nested case class so its fields are read/written directly in the parent document.
+### Flattening nested documents
 
 ```scala
+import hearth.kindlings.reactivemongobsonderivation._
 import hearth.kindlings.reactivemongobsonderivation.annotations.Flatten
 
 case class Range(start: Int, end: Int)
 case class LabelledRange(name: String, @Flatten range: Range)
 
 val handler = KindlingsBsonDocumentHandler.derived[LabelledRange]
-
 handler.writeTry(LabelledRange("r1", Range(2, 5))).get
 // BSONDocument("name" -> "r1", "start" -> 2, "end" -> 5)
-
-handler.readDocument(BSONDocument("name" -> "r1", "start" -> 2, "end" -> 5)).get
-// LabelledRange("r1", Range(2, 5))
 ```
 
-## Examples
+A flattened field must have a document codec. Kindlings uses an existing `BSONDocumentHandler[A]`, or separately supplied `BSONDocumentReader[A]` and `BSONDocumentWriter[A]`, before attempting nested derivation. Direct and mutual recursive flattening are rejected at compile time.
 
-### Sealed trait / enum
+## Sealed traits and collections
 
 ```scala
+import hearth.kindlings.reactivemongobsonderivation._
+
 sealed trait Shape
 case class Circle(radius: Double) extends Shape
 case class Square(side: Double) extends Shape
 
-val handler = KindlingsBsonDocumentHandler.derived[Shape]
-
-handler.writeTry(Circle(2.5)).get
+val shapeHandler = KindlingsBsonDocumentHandler.derived[Shape]
+shapeHandler.writeTry(Circle(2.5)).get
 // BSONDocument("className" -> "Circle", "radius" -> 2.5)
 
-handler.readDocument(BSONDocument("className" -> "Square", "side" -> 3.0)).get
-// Square(3.0)
-```
-
-### Collections and options
-
-```scala
 case class Order(id: String, items: List[String], discount: Option[Double])
-
-val handler = KindlingsBsonDocumentHandler.derived[Order]
-handler.writeTry(Order("o1", List("apple", "banana"), Some(0.1))).get
+val orderHandler = KindlingsBsonDocumentHandler.derived[Order]
+orderHandler.writeTry(Order("o1", List("apple", "banana"), Some(0.1))).get
 // BSONDocument("id" -> "o1", "items" -> BSONArray("apple", "banana"), "discount" -> 0.1)
-
-handler.readDocument(BSONDocument("id" -> "o2", "items" -> BSONArray())).get
-// Order("o2", List(), None)
 ```
 
-### Default values
+For a map whose keys are not `String`, ReactiveMongo BSON represents keys as document field names. Supply both directions of conversion:
 
 ```scala
-case class Settings(name: String = "default", timeout: Int = 30)
+import reactivemongo.api.bson.{ KeyReader, KeyWriter }
 
-val handler = KindlingsBsonDocumentHandler.derived[Settings]
-handler.readDocument(BSONDocument()).get
-// Settings("default", 30)
+final case class UserId(value: String)
+implicit val userIdReader: KeyReader[UserId] = KeyReader(UserId.apply)
+implicit val userIdWriter: KeyWriter[UserId] = KeyWriter(_.value)
 ```
+
+Derivation fails if either codec is absent; this prevents asymmetric read/write handlers.
+
+## Migrating from ReactiveMongo macros
+
+The derived handler is compatible with ReactiveMongo APIs because it is a `BSONDocumentHandler[A]`. The derivation entry point and configuration are Kindlings APIs:
+
+| ReactiveMongo BSON | Kindlings BSON |
+|---|---|
+| `Macros.handler[A]` | `KindlingsBsonDocumentHandler.derived[A]` |
+| `MacroConfiguration()` | `BsonDocumentHandlerConfig.default` |
+| `@Key("name")` | `@FieldName("name")` |
+| type-position `@Reader` / `@Writer` | value-position `@Reader(reader)` / `@Writer(writer)` |
+| `MacroOptions.AutomaticMaterialization` | Automatic for supported sealed hierarchies |
+| `MacroOptions.ReadDefaultValues` | Constructor defaults and `@DefaultValue` are applied on missing fields |
+
+Check existing BSON round-trip tests when migrating, especially for custom field codecs, discriminator configuration, and defaults.
 
 ## Limitations
 
-- Cross-compiled for Scala 2.13 and Scala 3 (JVM only — `reactivemongo-bson-api` is JVM-only)
-- JVM only (Scala.js / Scala Native are not applicable — `reactivemongo-bson-api` is JVM-only)
-- Non-sealed (open) traits are not supported; only sealed trait / Scala 3 enum hierarchies work
-- `@Flatten` with conflicting inner field names is not detected at compile time; the resulting BSON document will have duplicate keys
-- No `UnionType` for non-sealed ADTs
+- JVM only.
+- Derives combined document handlers; it does not provide legacy standalone `Macros.reader` or `Macros.writer` entry points.
+- Non-sealed legacy `UnionType` ADTs are not supported. Use a sealed hierarchy or write a manual handler.
+- A flattened field's BSON key collisions are not detected at compile time.
+- Regular non-case classes require a manual `BSONDocumentHandler`.
+
+## Debugging and timeout
+
+Import the debug package to log derivation decisions:
+
+```scala
+import hearth.kindlings.reactivemongobsonderivation.debug._
+```
+
+The default derivation timeout is five seconds. Increase it for a large hierarchy with a compiler option:
+
+```text
+-Xmacro-settings:bsonDocumentHandler.timeout=60s
+```
