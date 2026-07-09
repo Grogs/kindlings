@@ -32,6 +32,8 @@ trait BsonDocumentHandlerMacrosImpl
 
   private[compiletime] object Types {
     def BsonDocumentHandler: Type.Ctor1[KindlingsBsonDocumentHandler] = Type.Ctor1.of[KindlingsBsonDocumentHandler]
+    def ExternalBsonDocumentHandler: Type.Ctor1[reactivemongo.api.bson.BSONDocumentHandler] =
+      Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentHandler]
     val LogDerivation: Type[KindlingsBsonDocumentHandler.LogDerivation] =
       Type.of[KindlingsBsonDocumentHandler.LogDerivation]
     val BsonDocument: Type[BSONDocument] = Type.of[BSONDocument]
@@ -586,7 +588,8 @@ trait BsonDocumentHandlerMacrosImpl
       cache: MLocal[ValDefsCache],
       derivedType: Option[??],
       config: Expr[BsonDocumentHandlerConfig],
-      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+      evaluatedConfig: Option[BsonDocumentHandlerConfig],
+      flattenStack: List[String]
   ) {
 
     def nest[B: Type]: DerivationCtx[B] = DerivationCtx(
@@ -594,8 +597,12 @@ trait BsonDocumentHandlerMacrosImpl
       cache = cache,
       derivedType = derivedType,
       config = config,
-      evaluatedConfig = evaluatedConfig
+      evaluatedConfig = evaluatedConfig,
+      flattenStack = flattenStack
     )
+
+    def nestFlattened[B: Type]: DerivationCtx[B] =
+      nest[B].copy(flattenStack = tpe.prettyPrint :: flattenStack)
 
     def getInstance[B: Type]: MIO[Option[Expr[KindlingsBsonDocumentHandler[B]]]] = {
       implicit val HandlerB: Type[KindlingsBsonDocumentHandler[B]] = Types.BsonDocumentHandler[B]
@@ -646,7 +653,8 @@ trait BsonDocumentHandlerMacrosImpl
         cache = ValDefsCache.mlocal,
         derivedType = derivedType,
         config = config,
-        evaluatedConfig = evaluatedConfig
+        evaluatedConfig = evaluatedConfig,
+        flattenStack = Nil
       )
   }
 
@@ -1313,14 +1321,8 @@ trait BsonDocumentHandlerMacrosImpl
             MIO.pure(Expr.quote {
               Expr.splice(readerExpr).readTry(Expr.splice(docExpr)).asInstanceOf[scala.util.Try[Any]]
             })
-          case None if isCaseClassOrEnum[Field] =>
-            buildFlattenedFieldReadExpr[Field](docExpr, fieldCtx)
           case None =>
-            val err = BsonDocumentHandlerDerivationError.CannotFlattenNonDocumentField(
-              fName,
-              Type[Field].prettyPrint
-            )
-            Log.error(err.message) >> MIO.fail(err)
+            buildFlattenedFieldReadExpr[Field](docExpr, fName, fieldCtx)
         }
       } else {
         val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
@@ -1336,11 +1338,34 @@ trait BsonDocumentHandlerMacrosImpl
       }
     }
 
+    /** Resolve a document handler for a flattened field. Prefer a user-provided standard `BSONDocumentHandler` before
+      * deriving one, matching ReactiveMongo's flatten behavior for externally-defined field types.
+      */
+    private def resolveFlattenedHandler[Field: Type](
+        fName: String,
+        fieldCtx: DerivationCtx[Field]
+    ): MIO[Expr[reactivemongo.api.bson.BSONDocumentHandler[Field]]] = {
+      implicit val HandlerT: Type[reactivemongo.api.bson.BSONDocumentHandler[Field]] =
+        Types.ExternalBsonDocumentHandler[Field]
+      Type[reactivemongo.api.bson.BSONDocumentHandler[Field]]
+        .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+        .toEither match {
+        case Right(handler)                      => MIO.pure(handler)
+        case Left(_) if isCaseClassOrEnum[Field] =>
+          deriveResultRecursively[Field](fieldCtx)
+            .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONDocumentHandler[Field]]])
+        case Left(_) =>
+          val err = BsonDocumentHandlerDerivationError.CannotFlattenNonDocumentField(fName, Type[Field].prettyPrint)
+          Log.error(err.message) >> MIO.fail(err)
+      }
+    }
+
     private def buildFlattenedFieldReadExpr[Field: Type](
         docExpr: Expr[BSONDocument],
+        fName: String,
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[Any]]] =
-      deriveResultRecursively[Field](fieldCtx).map { handlerExpr =>
+      resolveFlattenedHandler[Field](fName, fieldCtx).map { handlerExpr =>
         Expr.quote {
           Expr.splice(handlerExpr).readTry(Expr.splice(docExpr)).asInstanceOf[scala.util.Try[Any]]
         }
@@ -1528,7 +1553,7 @@ trait BsonDocumentHandlerMacrosImpl
                 }
               })
             case None =>
-              buildFlattenedFieldWriteExpr[Field](fieldValue, fieldCtx)
+              buildFlattenedFieldWriteExpr[Field](fName, fieldValue, fieldCtx)
           }
         } else {
           // @writer annotation: use the provided writer directly
@@ -1549,10 +1574,11 @@ trait BsonDocumentHandlerMacrosImpl
     }
 
     private def buildFlattenedFieldWriteExpr[Field: Type](
+        fName: String,
         fieldValue: Expr[Field],
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]]] =
-      deriveResultRecursively[Field](fieldCtx).map { handlerExpr =>
+      resolveFlattenedHandler[Field](fName, fieldCtx).map { handlerExpr =>
         Expr.quote {
           Expr.splice(handlerExpr).writeTry(Expr.splice(fieldValue)).map { innerDoc =>
             innerDoc.elements.map(e => Some(reactivemongo.api.bson.BSONElement(e.name, e.value))).toList
@@ -1683,13 +1709,20 @@ trait BsonDocumentHandlerMacrosImpl
                 // field would otherwise round-trip through java.lang.Integer/Boolean via Array[Any]).
                 fieldVarDefsNel <- fieldsNel.parTraverse { case (fName, param) =>
                   import param.tpe.Underlying as Field
-                  if (isFlattened(param) && Type[Field] =:= Type[A]) {
+                  if (
+                    isFlattened(param) && (Type[Field] =:= Type[A] || ctx.flattenStack.contains(
+                      Type[Field].prettyPrint
+                    ))
+                  ) {
                     val err = BsonDocumentHandlerDerivationError.CannotFlattenRecursiveField(
                       fName,
                       Type[A].prettyPrint
                     )
                     Log.error(err.message) >> MIO.fail(err)
-                  } else buildFieldVarDef[Field](docExpr, fName, param, ctx.nest[Field])
+                  } else {
+                    val fieldCtx = if (isFlattened(param)) ctx.nestFlattened[Field] else ctx.nest[Field]
+                    buildFieldVarDef[Field](docExpr, fName, param, fieldCtx)
+                  }
                 }
               } yield {
                 val combinedVars = fieldVarDefsNel.toList.foldLeft(
@@ -1743,7 +1776,8 @@ trait BsonDocumentHandlerMacrosImpl
                 .parTraverse { case (fName, fieldValue) =>
                   import fieldValue.Underlying as Field
                   val param = fieldsList.find(_._1 == fName).get._2
-                  buildFieldWriteExpr[Field](fName, param, fieldValue.value.asInstanceOf[Expr[Field]], ctx.nest[Field])
+                  val fieldCtx = if (isFlattened(param)) ctx.nestFlattened[Field] else ctx.nest[Field]
+                  buildFieldWriteExpr[Field](fName, param, fieldValue.value.asInstanceOf[Expr[Field]], fieldCtx)
                 }
                 .map { etries =>
                   val listTryExpr = etries.toList.foldRight(

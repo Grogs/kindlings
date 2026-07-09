@@ -72,6 +72,9 @@ final case class FlattenWithCustomIO(
     @Flatten @Reader(FlattenRangeCodecs.reader) @Writer(FlattenRangeCodecs.writer) range: Range
 )
 
+final case class ExternalFlattened(value: Int)
+final case class WithExternalFlatten(name: String, @Flatten external: ExternalFlattened)
+
 // TypeNaming
 object TreeModule {
   sealed trait Node
