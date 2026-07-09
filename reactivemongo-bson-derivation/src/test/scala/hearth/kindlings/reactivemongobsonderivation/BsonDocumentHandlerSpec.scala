@@ -218,9 +218,10 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
         val value = WithList(List("a", "b", "c"))
 
-        // Write round-trip
+        val expected = BSONDocument("names" -> BSONArray("a", "b", "c"))
         val written = handler.writeTry(value).get
-        assertEquals(handler.readDocument(written).get, value)
+        assertEquals(written, expected)
+        assertEquals(handler.readDocument(expected).get, value)
       }
 
       test("Set[Int]") {
@@ -238,9 +239,11 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val handler: KindlingsBsonDocumentHandler[WithMap] = KindlingsBsonDocumentHandler.derived[WithMap]
 
         val value = WithMap(Map("a" -> 1, "b" -> 2))
+        val expected = BSONDocument("items" -> BSONDocument("a" -> 1, "b" -> 2))
 
         val written = handler.writeTry(value).get
-        assertEquals(handler.readDocument(written).get, value)
+        assertEquals(written, expected)
+        assertEquals(handler.readDocument(expected).get, value)
       }
 
       test("Seq[String]") {
