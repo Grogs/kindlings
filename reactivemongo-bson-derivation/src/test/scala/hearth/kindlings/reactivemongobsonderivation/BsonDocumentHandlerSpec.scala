@@ -496,6 +496,23 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.writeTry(value).get, expectedDoc)
         assertEquals(handler.readDocument(expectedDoc).get, value)
       }
+
+      test("@Flatten uses a user-provided BSONDocumentHandler") {
+        implicit val externalHandler: BSONDocumentHandler[ExternalFlattened] = BSONDocumentHandler(
+          read = document => ExternalFlattened(document.getAsTry[Int]("externalValue").get),
+          write = value => BSONDocument("externalValue" -> value.value)
+        )
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithExternalFlatten] =
+          KindlingsBsonDocumentHandler.derived[WithExternalFlatten]
+
+        val value = WithExternalFlatten("external", ExternalFlattened(42))
+        val expectedDoc = BSONDocument("name" -> "external", "externalValue" -> 42)
+
+        assertEquals(handler.writeTry(value).get, expectedDoc)
+        assertEquals(handler.readDocument(expectedDoc).get, value)
+      }
     }
 
     group("type naming") {
@@ -979,6 +996,19 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
           KindlingsBsonDocumentHandler.derived[InvalidRecursiveFlatten]
           """
         ).check("Cannot flatten recursive field", "InvalidRecursiveFlatten.parent")
+      }
+
+      test("mutually recursive @Flatten fails derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Flatten
+
+          final case class MutualFlattenA(@Flatten b: MutualFlattenB)
+          final case class MutualFlattenB(@Flatten a: MutualFlattenA)
+          KindlingsBsonDocumentHandler.derived[MutualFlattenA]
+          """
+        ).check("Cannot flatten recursive field", "MutualFlattenB.a")
       }
 
       test("@Flatten on a non-document field fails derivation") {

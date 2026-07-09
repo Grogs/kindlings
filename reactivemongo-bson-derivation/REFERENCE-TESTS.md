@@ -31,7 +31,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | `"handle recursive structure"` / `with recursive auto-materialization` | `recursive structure (Tree)` | |
 | `"support overriding keys with annotations"` | `support overriding keys with annotations` | Uses `@FieldName` instead of `@Key` |
 | `"be generated for class class with self reference"` | `be generated for class with self reference` | |
-| `"support @Flatten annotation"` | `@Flatten merges inner case class fields into parent document`, `@Flatten on a non-document field fails derivation`, `recursive @Flatten fails derivation` | Covers positive and invalid targets |
+| `"support @Flatten annotation"` | `@Flatten merges inner case class fields into parent document`, `@Flatten uses a user-provided BSONDocumentHandler`, `@Flatten on a non-document field fails derivation`, `recursive @Flatten fails derivation`, `mutually recursive @Flatten fails derivation` | Covers derived/external handlers and invalid targets |
 | `"support @Reader & @Writer annotations"` | `round-trip with @reader and @writer` | |
 | `"be generated for Value class"` | `be generated for value class` | |
 | Default-value tests | `default values from Scala-level defaults`, `default values from @defaultValue annotation` | |
@@ -120,8 +120,8 @@ type is delegated to the inner `BSONReader` and fails, as in the reference.
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~34 top-level behaviors (76 tests in our suite).
+- **Ported / adapted**: ~36 top-level behaviors (78 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 76 tests currently passing.
+- **Test suite**: 78 tests currently passing.
