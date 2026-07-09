@@ -31,7 +31,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | `"handle recursive structure"` / `with recursive auto-materialization` | `recursive structure (Tree)` | |
 | `"support overriding keys with annotations"` | `support overriding keys with annotations` | Uses `@FieldName` instead of `@Key` |
 | `"be generated for class class with self reference"` | `be generated for class with self reference` | |
-| `"support @Flatten annotation"` | `@Flatten merges inner case class fields into parent document` | Positive cases only |
+| `"support @Flatten annotation"` | `@Flatten merges inner case class fields into parent document`, `@Flatten on a non-document field fails derivation`, `recursive @Flatten fails derivation` | Covers positive and invalid targets |
 | `"support @Reader & @Writer annotations"` | `round-trip with @reader and @writer` | |
 | `"be generated for Value class"` | `be generated for value class` | |
 | Default-value tests | `default values from Scala-level defaults`, `default values from @defaultValue annotation` | |
@@ -41,7 +41,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | Non-String map keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`) | `Map[Locale, String]`, `Map[UUID, Int]`, `Map with a user-provided value-class key codec` | Summons built-in and user-provided `KeyReader`/`KeyWriter` instances |
 | `@DefaultValue` with `Option[Float]` (`WithDefaultValues2.score`) | `default values from @DefaultValue annotation` | Covariant `defaultValue` + `<:<` lookup |
 | `TypeNaming` tests | `FullName discriminator includes enclosing objects`, `Custom type naming transforms simple name`, `SimpleName discriminator survives nested sealed trait` | Default `FullName`; `SimpleName` opt-in |
-| `@Flatten` nested test | `@Flatten works with nested flattening`, `@Flatten merges inner case class fields into parent document` | Positive cases only |
+| `@Flatten` nested test | `@Flatten works with nested flattening`, `@Flatten merges inner case class fields into parent document` | Nested positive coverage |
 
 ## Reference tests not ported
 
@@ -117,8 +117,8 @@ type is delegated to the inner `BSONReader` and fails, as in the reference.
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~30 top-level behaviors (72 tests in our suite).
+- **Ported / adapted**: ~32 top-level behaviors (74 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 72 tests currently passing.
+- **Test suite**: 74 tests currently passing.

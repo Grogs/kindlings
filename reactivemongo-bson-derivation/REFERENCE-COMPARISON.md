@@ -108,7 +108,10 @@ compiles, but not the BSON representation once an instance is available.
 
 **Ours**: `@Flatten` annotation supported. A flattened field is read/written by deriving a handler for the inner type and applying it directly to the parent document. Nested flattening works recursively.
 
-**Status**: **Done** (see task 8). Caveat: conflicting inner field names are not detected at compile time.
+**Status**: **Done** (see task 8). Non-document and directly recursive
+flattened fields fail derivation rather than generating a handler with surprising
+runtime behavior. Caveat: conflicting inner field names are not detected at
+compile time.
 
 ## Same Behavior
 

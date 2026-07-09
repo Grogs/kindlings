@@ -965,6 +965,30 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
           """
         ).check("Cannot ignore field value: scala.Int needs a Scala default value or @DefaultValue")
       }
+
+      test("recursive @Flatten fails derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Flatten
+
+          final case class InvalidRecursiveFlatten(value: String, @Flatten parent: InvalidRecursiveFlatten)
+          KindlingsBsonDocumentHandler.derived[InvalidRecursiveFlatten]
+          """
+        ).check("Cannot flatten recursive field", "InvalidRecursiveFlatten.parent")
+      }
+
+      test("@Flatten on a non-document field fails derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Flatten
+
+          final case class InvalidNonDocumentFlatten(@Flatten value: String)
+          KindlingsBsonDocumentHandler.derived[InvalidNonDocumentFlatten]
+          """
+        ).check("Cannot flatten field value: java.lang.String is not a case class or sealed trait")
+      }
     }
 
   }
