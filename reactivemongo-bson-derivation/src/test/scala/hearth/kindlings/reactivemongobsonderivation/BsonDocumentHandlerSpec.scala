@@ -481,6 +481,18 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         assertEquals(handler.writeTry(value).get, expectedDoc)
         assertEquals(handler.readDocument(expectedDoc).get, value)
       }
+
+      test("@Flatten composes with @Reader and @Writer") {
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[FlattenWithCustomIO] =
+          KindlingsBsonDocumentHandler.derived[FlattenWithCustomIO]
+
+        val value = FlattenWithCustomIO("range", Range(2, 5))
+        val expectedDoc = BSONDocument("name" -> "range", "start" -> 2, "end" -> 5)
+
+        assertEquals(handler.writeTry(value).get, expectedDoc)
+        assertEquals(handler.readDocument(expectedDoc).get, value)
+      }
     }
 
     group("type naming") {

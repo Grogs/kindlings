@@ -6,6 +6,7 @@ import hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull
 import hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue
 import hearth.kindlings.reactivemongobsonderivation.annotations.Reader
 import hearth.kindlings.reactivemongobsonderivation.annotations.Writer
+import hearth.kindlings.reactivemongobsonderivation.annotations.Flatten
 
 // Simple types
 final case class Empty()
@@ -50,6 +51,25 @@ final case class MiddleFlatten(
 final case class OuterFlatten(
     @hearth.kindlings.reactivemongobsonderivation.annotations.Flatten middle: MiddleFlatten,
     d: String
+)
+
+object FlattenRangeCodecs {
+  val reader: reactivemongo.api.bson.BSONReader[Range] = reactivemongo.api.bson.BSONReader.from {
+    case document: reactivemongo.api.bson.BSONDocument =>
+      for {
+        start <- document.getAsTry[Int]("start")
+        end <- document.getAsTry[Int]("end")
+      } yield Range(start, end)
+    case value => scala.util.Failure(new IllegalArgumentException(s"Expected BSONDocument, got $value"))
+  }
+
+  val writer: reactivemongo.api.bson.BSONWriter[Range] = reactivemongo.api.bson.BSONWriter.from { range =>
+    scala.util.Success(reactivemongo.api.bson.BSONDocument("start" -> range.start, "end" -> range.end))
+  }
+}
+final case class FlattenWithCustomIO(
+    name: String,
+    @Flatten @Reader(FlattenRangeCodecs.reader) @Writer(FlattenRangeCodecs.writer) range: Range
 )
 
 // TypeNaming
