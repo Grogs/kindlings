@@ -863,6 +863,24 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(value).get
         assertEquals(handler.readDocument(written).get, value)
       }
+
+      test("Map with a user-provided value-class key codec") {
+        implicit val fooValKeyReader: KeyReader[FooVal] =
+          KeyReader(key => new FooVal(key.stripPrefix("id-").toInt))
+        implicit val fooValKeyWriter: KeyWriter[FooVal] =
+          KeyWriter(key => s"id-${key.v}")
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithFooValMap] =
+          KindlingsBsonDocumentHandler.derived[WithFooValMap]
+
+        val value = WithFooValMap(Map(new FooVal(7) -> "seven"))
+        val expected = BSONDocument("values" -> BSONDocument("id-7" -> "seven"))
+
+        assertEquals(handler.writeTry(value).get, expected)
+        assertEquals(handler.readDocument(expected).get, value)
+      }
+
       test("@Ignore field is not serialized") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[WithIgnoredField] =
