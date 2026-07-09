@@ -253,7 +253,44 @@ trait BsonDocumentHandlerMacrosImpl
   def isCaseClassOrEnum[A: Type]: Boolean =
     CaseClass.parse[A].toEither.isRight || Enum.parse[A].toEither.isRight
 
+  /** Reject non-String map keys unless both conversion directions are explicitly available. This must run before
+    * summoning a collection reader/writer: ReactiveMongo's broad collection implicits can otherwise defer the missing
+    * codec failure until generated code executes.
+    */
+  private def ensureMapKeyCodecs[A: Type](): Unit = Type[A] match {
+    case IsMap(isMap) =>
+      import isMap.Underlying as Pair
+      ensureMapKeyCodecsOf[A, Pair](isMap.value)
+    case _ => ()
+  }
+
+  private def ensureMapKeyCodecsOf[A: Type, Pair: Type](isMap: IsMapOf[A, Pair]): Unit = {
+    import isMap.Key
+    implicit val StringT: Type[String] = Types.String
+    implicit val KeyReaderT: Type[reactivemongo.api.bson.KeyReader[Key]] = Types.KeyReader[Key]
+    implicit val KeyWriterT: Type[reactivemongo.api.bson.KeyWriter[Key]] = Types.KeyWriter[Key]
+    val hasKeyReader = Type[reactivemongo.api.bson.KeyReader[Key]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toOption
+      .nonEmpty
+    val hasKeyWriter = Type[reactivemongo.api.bson.KeyWriter[Key]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toOption
+      .nonEmpty
+    if (!(Type[Key] =:= Type[String]) && !(hasKeyReader && hasKeyWriter)) {
+      Environment.reportErrorAndAbort(
+        BsonDocumentHandlerDerivationError
+          .CannotDeriveCollection(
+            Type[A].prettyPrint,
+            s"Map key ${Type[Key].prettyPrint} requires both KeyReader and KeyWriter"
+          )
+          .message
+      )
+    }
+  }
+
   def resolveBsonReader[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    ensureMapKeyCodecs[A]()
     implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
     @scala.annotation.nowarn("msg=is never used")
     implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
@@ -399,6 +436,7 @@ trait BsonDocumentHandlerMacrosImpl
   }
 
   def resolveBsonWriter[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    ensureMapKeyCodecs[A]()
     implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
     @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
@@ -952,6 +990,7 @@ trait BsonDocumentHandlerMacrosImpl
       implicit val TryBsonDocumentT: Type[scala.util.Try[BSONDocument]] = Types.TryCtor[BSONDocument]
 
       import isMap.{Key, Value, CtorResult}
+      ensureMapKeyCodecsOf[A, Pair](isMap)
       val factoryExpr = isMap.factory
       val buildStep = isMap.build
 
