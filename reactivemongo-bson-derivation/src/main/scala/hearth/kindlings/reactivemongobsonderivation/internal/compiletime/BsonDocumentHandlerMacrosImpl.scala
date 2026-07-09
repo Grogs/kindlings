@@ -1274,12 +1274,17 @@ trait BsonDocumentHandlerMacrosImpl
     ): MIO[Expr[scala.util.Try[Any]]] = {
       implicit val ignoreAnnT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] = Types.ignoreAnn
       if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](param)) {
-        // @ignore: field is not serialized. Use default value if available, else null.
+        // Match ReactiveMongo: an ignored field must be reconstructible. Falling back to null would
+        // produce invalid values for primitives and makes a malformed document appear to decode.
         computeDefaultExpr[Field](param) match {
           case Some(defaultExpr) =>
             MIO.pure(Expr.quote(scala.util.Success(Expr.splice(defaultExpr)).asInstanceOf[scala.util.Try[Any]]))
           case None =>
-            MIO.pure(Expr.quote(scala.util.Success(null.asInstanceOf[Field]).asInstanceOf[scala.util.Try[Any]]))
+            val err = BsonDocumentHandlerDerivationError.CannotIgnoreFieldWithoutDefault(
+              fName,
+              Type[Field].prettyPrint
+            )
+            Log.error(err.message) >> MIO.fail(err)
         }
       } else if (isFlattened(param)) {
         // A flattened custom reader receives the whole containing document, just like a derived

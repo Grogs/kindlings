@@ -952,5 +952,20 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
     }
 
+    group("compile-time errors") {
+
+      test("@Ignore without a default fails derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Ignore
+
+          final case class InvalidIgnoredField(@Ignore value: Int)
+          KindlingsBsonDocumentHandler.derived[InvalidIgnoredField]
+          """
+        ).check("Cannot ignore field value: scala.Int needs a Scala default value or @DefaultValue")
+      }
+    }
+
   }
 }
