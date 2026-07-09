@@ -39,7 +39,7 @@ Current state:
 - Single `derived[A](using config)` entry point (no separate `derivedConfig`)
 - Discriminator field name wired through `DerivationCtx` with compile-time + runtime fallback
 - Default discriminator aligned with ReactiveMongo-BSON: `"className"`
-- **semiEval intentionally disabled** (`evaluatedConfig = None`) — configs with function fields can't be evaluated at compile time. Runtime splice is the path.
+- `semiEval` evaluates common sealed-trait configs at compile time; a runtime splice remains as the fallback for non-evaluable configs.
 
 **Remaining**:
 1. Wire `fieldNameMapper` through field name resolution (currently uses `resolveFieldName`)
@@ -80,8 +80,8 @@ Apply patterns from `kindlings-runtime-perf` skill:
 **Reference**: `docs/research/jsoniter-codegen-techniques.md`, `docs/research/perf-regression-analysis.md`
 
 **Status**:
-- [ ] Apply semiEval to config evaluation
-- [ ] Add typed vars for primitives
+- [x] Apply semiEval to config evaluation
+- [x] Add typed vars for primitives (case-class decoding no longer uses `Array[Any]` / `sequenceTries`)
 - [ ] Optimize case class decoding with position-based access
 - [ ] Inline built-in type encoding/decoding
 - [ ] Inline collection loops

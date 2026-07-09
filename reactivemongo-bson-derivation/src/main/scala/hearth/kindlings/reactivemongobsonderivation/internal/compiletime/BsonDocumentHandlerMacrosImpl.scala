@@ -39,7 +39,6 @@ trait BsonDocumentHandlerMacrosImpl
     val BsonValue: Type[reactivemongo.api.bson.BSONValue] = Type.of[reactivemongo.api.bson.BSONValue]
     val BsonArray: Type[reactivemongo.api.bson.BSONArray] = Type.of[reactivemongo.api.bson.BSONArray]
     val BsonElement: Type[reactivemongo.api.bson.BSONElement] = Type.of[reactivemongo.api.bson.BSONElement]
-    val ArrayAny: Type[Array[Any]] = Type.of[Array[Any]]
     val Any: Type[Any] = Type.of[Any]
     val TryBsonDocument: Type[Try[BSONDocument]] = Type.of[Try[BSONDocument]]
     val BsonReader: Type.Ctor1[reactivemongo.api.bson.BSONReader] = Type.Ctor1.of[reactivemongo.api.bson.BSONReader]
@@ -1165,6 +1164,24 @@ trait BsonDocumentHandlerMacrosImpl
       }
   }
 
+  /** Compile-time zero value for a field type — used as the initial value of a typed local var so the constructor never
+    * sees an uninitialized field even if the read path short-circuits. Reference: jsoniter's `deriveZeroValue` (see
+    * `kindlings-runtime-perf` skill, technique #2). Without typed vars, decayed reads go through `Array[Any]` which
+    * boxes every primitive into `java.lang.Integer` / `Boolean` etc.
+    */
+  @scala.annotation.nowarn("msg=is never used")
+  private[compiletime] def deriveZeroValue[A: Type]: Expr[A] =
+    if (Type[A] <:< Type.of[AnyRef]) Expr.quote(null.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Boolean]) Expr.quote(false.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Byte]) Expr.quote(0.toByte.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Short]) Expr.quote(0.toShort.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Int]) Expr.quote(0.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Long]) Expr.quote(0L.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Float]) Expr.quote(0.0f.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Double]) Expr.quote(0.0.asInstanceOf[A])
+    else if (Type[A] =:= Type.of[Char]) Expr.quote(' '.asInstanceOf[A])
+    else Expr.quote(null.asInstanceOf[A])
+
   object HandleAsCaseClassRule extends DerivationRule("handle as case class") {
     def apply[A: DerivationCtx]: MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] =
       Log.info(s"Attempting to handle ${Type[A].prettyPrint} as a case class") >> {
@@ -1215,22 +1232,39 @@ trait BsonDocumentHandlerMacrosImpl
       fromParamDefault.orElse(fromAnnotation)
     }
 
-    /** Build a `(name, fieldExpr.as_??)` pair for the constructor's field map.
+    /** Per-field typed var + assign-on-success, returned as a `ValDefs[(name, getter, assignExpr)]`. The var is
+      * initialized to the type's zero value; the assign expression matches the per-field BSON read `Try[Any]` and
+      * writes the typed value into the var on `Success`, propagating the `Failure` as `Try[Unit]` otherwise.
       *
-      * Extracted as a helper so that `Field` (from `param.tpe.Underlying`) is passed as a real type parameter
-      * `[Field: Type]` and the resulting `Expr[Field]` no longer references the macro-time `param` path-dependently.
-      * Without this, the Scala 2 reifier encodes `Field` as `param.tpe.Field` and the generated code references the
-      * macro-only `param` value, which does not exist at the call site (see `hearth-cross-compilation` pitfall #3/#23).
+      * Lives outside the per-field `parTraverse`/quote scope as an explicit `[Field: Type]` helper so that the Scala 2
+      * reifier captures `Field` as a real type parameter (with a concrete `WeakTypeTag`) rather than a path-dependent
+      * `param.tpe.Underlying` reference leaking the macro-only `param` into generated code (see
+      * `hearth-cross-compilation` pitfall #3/#23).
       */
-    private def buildConstructorFieldExpr[Field: Type](
-        arrExpr: Expr[Array[Any]],
-        idx: Int,
-        name: String
-    ): (String, Expr_??) = {
-      val fieldExpr: Expr[Field] =
-        Expr.quote(Expr.splice(arrExpr)(Expr.splice(Expr(idx))).asInstanceOf[Field])
-      (name, fieldExpr.as_??)
-    }
+    private def buildFieldVarDef[Field: Type](
+        docExpr: Expr[BSONDocument],
+        fName: String,
+        param: Parameter,
+        fieldCtx: DerivationCtx[Field]
+    ): MIO[ValDefs[(String, Expr_??, Expr[scala.util.Try[Unit]])]] =
+      buildFieldReadExpr[Field](docExpr, fName, param, fieldCtx).map { readTryExpr =>
+        val defaultExpr: Expr[Field] = deriveZeroValue[Field]
+        val fieldVar = ValDefs.createVar[Field](defaultExpr, s"_$fName")
+        fieldVar.map { case (getter, setter) =>
+          // Match on the runtime Try[Any] result of the field read, casting the success value to Field and
+          // writing it through the typed var's setter; Failure propagates short-circuited through the outer
+          // .flatMap tail of `sequencedAssigns` in `deriveCaseClass`.
+          val assignExpr: Expr[scala.util.Try[Unit]] = Expr.quote {
+            Expr.splice(readTryExpr) match {
+              case scala.util.Success(v) =>
+                Expr.splice(setter(Expr.quote(v.asInstanceOf[Field])))
+                scala.util.Success(())
+              case f: scala.util.Failure[?] => f.asInstanceOf[scala.util.Try[Unit]]
+            }
+          }
+          (fName, getter.as_??, assignExpr)
+        }
+      }
 
     private def buildFieldReadExpr[Field: Type](
         docExpr: Expr[BSONDocument],
@@ -1545,7 +1579,6 @@ trait BsonDocumentHandlerMacrosImpl
         caseClass: CaseClass[A]
     ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
       implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
-      implicit val ArrayAnyT: Type[Array[Any]] = Types.ArrayAny
       implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
       implicit val TryBsonDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
 
@@ -1580,56 +1613,60 @@ trait BsonDocumentHandlerMacrosImpl
           readLambda <- LambdaBuilder
             .of1[BSONDocument]("doc")
             .traverse { docExpr =>
+              @scala.annotation.nowarn("msg=is never used")
+              implicit val StringT: Type[String] = Types.String
+              val knownKeyExprs: List[Expr[String]] = fieldsList.flatMap { case (fName, param) =>
+                if (isFlattened(param)) None
+                else Some(resolveFieldKeyExpr(fName, param, ctx))
+              }
+              val unexpectedCheckExpr: Expr[scala.util.Try[Unit]] =
+                buildUnexpectedFieldsCheck(docExpr, knownKeyExprs, ctx)
               for {
-                fieldReads <- fieldsNel.parTraverse { case (fName, param) =>
+                // Build one typed local var per field (see kindlings-runtime-perf technique #2). Each var holds the
+                // field's typed value directly, eliminating the Array[Any]+sequenceTries boxing path (every primitive
+                // field would otherwise round-trip through java.lang.Integer/Boolean via Array[Any]).
+                fieldVarDefsNel <- fieldsNel.parTraverse { case (fName, param) =>
                   import param.tpe.Underlying as Field
-                  buildFieldReadExpr[Field](docExpr, fName, param, ctx.nest[Field])
+                  buildFieldVarDef[Field](docExpr, fName, param, ctx.nest[Field])
                 }
-                constructLambda <- LambdaBuilder
-                  .of1[Array[Any]]("arr")
-                  .traverse { arrExpr =>
-                    val fieldMap: Map[String, Expr_??] = fieldsList.zipWithIndex.map { case ((name, param), idx) =>
-                      import param.tpe.Underlying as Field
-                      buildConstructorFieldExpr[Field](arrExpr, idx, name)
-                    }.toMap
-                    foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
-                      onTypes = _ => Map.empty,
-                      onValues = _ => fieldMap
-                    ) match {
-                      case Right(constructExpr) => MIO.pure(constructExpr.value.asInstanceOf[Expr[A]])
-                      case Left(error)          =>
-                        val err =
-                          BsonDocumentHandlerDerivationError.CannotConstructType(Type[A].prettyPrint, Some(error))
-                        Log.error(err.message) >> MIO.fail(err)
-                    }
-                  }
-                  .map(_.build[A])
               } yield {
-                @scala.annotation.nowarn("msg=is never used")
-                implicit val StringT: Type[String] = Types.String
-                val listExpr = fieldReads.toList.foldRight(Expr.quote(List.empty[Try[Any]])) { case (read, acc) =>
-                  Expr.quote(Expr.splice(read) :: Expr.splice(acc))
-                }
-                // Build the unexpected fields check (no-op when skipUnexpectedFields=true or all keys are literals)
-                // Flattened fields are excluded from the outer check because their inner field names are not known
-                // at this point without re-parsing the inner case class. The inner handler will still validate its own
-                // fields when skipUnexpectedFields=false.
-                val knownKeyExprs: List[Expr[String]] = fieldsList.flatMap { case (fName, param) =>
-                  if (isFlattened(param)) None
-                  else Some(resolveFieldKeyExpr(fName, param, ctx))
-                }
-                val unexpectedCheckExpr: Expr[scala.util.Try[Unit]] = buildUnexpectedFieldsCheck(
-                  docExpr,
-                  knownKeyExprs,
-                  ctx
-                )
-                Expr.quote {
-                  hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                    .sequenceTries[A](
-                      Expr.splice(listExpr),
-                      Expr.splice(constructLambda)
-                    )
-                    .flatMap(a => Expr.splice(unexpectedCheckExpr).map(_ => a))
+                val combinedVars = fieldVarDefsNel.toList.foldLeft(
+                  ValDefsTraverse.pure(List.empty): ValDefs[List[(String, Expr_??, Expr[scala.util.Try[Unit]])]]
+                )((acc, vd) => acc.map2(vd) { case (l, e) => l :+ e })
+                combinedVars.use { fieldInfos =>
+                  // fieldInfo: (name, getter.as_??, assignExpr). Construct takes getters as field values.
+                  val fieldMap: Map[String, Expr_??] = fieldsList
+                    .zip(fieldInfos)
+                    .map { case ((name, _), (_, getter, _)) =>
+                      (name, getter)
+                    }
+                    .toMap
+                  val constructExpr: Expr[A] = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                    onTypes = _ => Map.empty,
+                    onValues = _ => fieldMap
+                  ) match {
+                    case Right(expr) => expr.value.asInstanceOf[Expr[A]]
+                    case Left(error) =>
+                      Environment.reportErrorAndAbort(
+                        BsonDocumentHandlerDerivationError
+                          .CannotConstructType(Type[A].prettyPrint, Some(error))
+                          .message
+                      )
+                  }
+                  // Sequence per-field assign-with-failure-propagation: short-circuit on the first read failure.
+                  val sequencedAssigns: Expr[scala.util.Try[Unit]] = fieldInfos
+                    .map(_._3)
+                    .foldRight(
+                      Expr.quote(scala.util.Success(()): scala.util.Try[Unit])
+                    ) { (next, acc) =>
+                      Expr.quote(Expr.splice(acc).flatMap(_ => Expr.splice(next)))
+                    }
+                  Expr.quote {
+                    Expr
+                      .splice(sequencedAssigns)
+                      .flatMap(_ => Expr.splice(unexpectedCheckExpr))
+                      .map(_ => Expr.splice(constructExpr))
+                  }
                 }
               }
             }
