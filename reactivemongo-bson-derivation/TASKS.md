@@ -152,22 +152,22 @@ Added to `docs/mkdocs.yml` nav.
 
 **Deliverable**: `reactivemongo-bson-derivation/REFERENCE-COMPARISON.md`
 
-**Key findings**:
+**Current findings** (supersedes the initial comparison):
 
-1. **Default values are always applied** (not opt-in like reference's `ReadDefaultValues`)
-2. **`@NoneAsNull` annotation not supported** (feature gap)
-3. **`BSONNull` always decoded as `None`** (more permissive than reference)
-4. **Discriminator uses short class name** (reference uses full name by default)
-5. **Field naming is `String => String` function** (reference uses structured `FieldNaming` trait)
-6. **No `UnionType` / non-sealed ADT support** (sealed traits only)
-7. **No `@DefaultValue` annotation** (only Scala-level defaults)
-8. **No `@Reader`/`@Writer` per-field annotations** (only `@FieldName`)
-9. **`AutomaticMaterialization` always on** (reference requires opt-in)
-10. **No `DisableWarnings`/`Verbose` options**
+1. Default values and `@DefaultValue` match the current reference behavior.
+2. `@NoneAsNull` and `BSONNull` Option decoding match the reference.
+3. Full-name discriminators, structured field naming, `@FieldName`, `@Reader`,
+   `@Writer`, `@Flatten`, `@Ignore`, collections, value types, maps, empty case
+   classes, and recursive types are supported.
+4. `UnionType` / non-sealed ADTs remain unsupported.
+5. Automatic materialization is intentionally always enabled: it is an additive
+   compile-time convenience and does not change BSON once an instance exists.
+6. `DisableWarnings` / `Verbose` options have no equivalent.
 
-**Same behavior**: default discriminator `"className"`, default identity field naming, options read, sealed trait discrimination, collections, value types, maps, empty case classes.
+See `REFERENCE-COMPARISON.md` and `REFERENCE-TESTS.md` for the live detail.
 
-**Identified limitation**: Recursive types (e.g., `Tree`) **do not compile** with the current `setHelper` pattern. Reference uses a function-based approach (also used by jsoniter) to break the recursive cycle. Fix requires refactoring `setHelper` to follow the jsoniter pattern.
+**Resolved limitation**: Recursive types (e.g., `Tree`) compile through the
+`setHelper` def-caching fix.
 
 **Status**:
 - [x] Extract and review ReactiveMongo-BSON macro source
