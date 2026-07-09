@@ -106,10 +106,11 @@ the reference). Covered by `FullName discriminator includes enclosing objects` a
   `@Ignore` intentionally short-circuits read and write before the custom handler
   is consulted.
 
-### Strict BSONNull handling for Option (`"not support type mismatch for optional value"`, `"support null for optional value"` with strict semantics)
+### Option BSONNull handling (`"not support type mismatch for optional value"`, `"support null for optional value"`)
 
-**Not ported.** We always decode `BSONNull` as `None` and are more permissive
-than the reference (see `REFERENCE-COMPARISON.md` #3).
+**Ported.** `Option field - None (explicit BSONNull)` verifies that `BSONNull`
+decodes as `None`, matching the reference. A non-null BSON value with the wrong
+type is delegated to the inner `BSONReader` and fails, as in the reference.
 
 ## Coverage summary
 
