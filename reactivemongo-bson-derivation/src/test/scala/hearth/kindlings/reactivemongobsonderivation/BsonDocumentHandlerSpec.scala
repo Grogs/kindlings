@@ -952,9 +952,12 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val handler: KindlingsBsonDocumentHandler[WithUUIDMap] =
           KindlingsBsonDocumentHandler.derived[WithUUIDMap]
 
-        val value = WithUUIDMap(Map(UUID.fromString("550e8400-e29b-41d4-a716-446655440000") -> 1))
+        val id = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
+        val value = WithUUIDMap(Map(id -> 1))
+        val expected = BSONDocument("items" -> BSONDocument(id.toString -> 1))
         val written = handler.writeTry(value).get
-        assertEquals(handler.readDocument(written).get, value)
+        assertEquals(written, expected)
+        assertEquals(handler.readDocument(expected).get, value)
       }
 
       test("Map with a user-provided value-class key codec") {
@@ -1093,6 +1096,19 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
           KindlingsBsonDocumentHandler.derived[DuplicateReader]
           """
         ).check("At most one @Reader annotation is allowed for field value")
+      }
+
+      test("duplicate @Writer annotations fail derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Writer
+          import reactivemongo.api.bson.BSONStringHandler
+
+          final case class DuplicateWriter(@Writer(BSONStringHandler) @Writer(BSONStringHandler) value: String)
+          KindlingsBsonDocumentHandler.derived[DuplicateWriter]
+          """
+        ).check("At most one @Writer annotation is allowed for field value")
       }
     }
 

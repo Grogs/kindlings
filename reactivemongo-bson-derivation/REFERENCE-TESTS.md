@@ -119,8 +119,8 @@ type is delegated to the inner `BSONReader` and fails, as in the reference.
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~39 top-level behaviors (81 tests in our suite).
+- **Ported / adapted**: ~40 top-level behaviors (82 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 81 tests currently passing.
+- **Test suite**: 82 tests currently passing.

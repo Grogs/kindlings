@@ -32,8 +32,6 @@ trait BsonDocumentHandlerMacrosImpl
 
   private[compiletime] object Types {
     def BsonDocumentHandler: Type.Ctor1[KindlingsBsonDocumentHandler] = Type.Ctor1.of[KindlingsBsonDocumentHandler]
-    def ExternalBsonDocumentHandler: Type.Ctor1[reactivemongo.api.bson.BSONDocumentHandler] =
-      Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentHandler]
     def ExternalBsonDocumentReader: Type.Ctor1[reactivemongo.api.bson.BSONDocumentReader] =
       Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentReader]
     def ExternalBsonDocumentWriter: Type.Ctor1[reactivemongo.api.bson.BSONDocumentWriter] =
