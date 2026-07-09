@@ -251,8 +251,10 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val handler: KindlingsBsonDocumentHandler[WordLover] = KindlingsBsonDocumentHandler.derived[WordLover]
 
         val value = WordLover("john", Seq("hello", "world"))
+        val expected = BSONDocument("name" -> "john", "words" -> BSONArray("hello", "world"))
         val written = handler.writeTry(value).get
-        assertEquals(handler.readDocument(written).get, value)
+        assertEquals(written, expected)
+        assertEquals(handler.readDocument(expected).get, value)
       }
 
       test("single member case class") {
@@ -509,6 +511,25 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
         val value = WithExternalFlatten("external", ExternalFlattened(42))
         val expectedDoc = BSONDocument("name" -> "external", "externalValue" -> 42)
+
+        assertEquals(handler.writeTry(value).get, expectedDoc)
+        assertEquals(handler.readDocument(expectedDoc).get, value)
+      }
+
+      test("@Flatten uses separately provided BSONDocumentReader and BSONDocumentWriter") {
+        implicit val externalReader: BSONDocumentReader[ExternallyReadWritten] = BSONDocumentReader.from { document =>
+          scala.util.Success(ExternallyReadWritten(document.getAsTry[Int]("separateValue").get))
+        }
+        implicit val externalWriter: BSONDocumentWriter[ExternallyReadWritten] = BSONDocumentWriter { value =>
+          BSONDocument("separateValue" -> value.value)
+        }
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[WithSeparateExternalFlatten] =
+          KindlingsBsonDocumentHandler.derived[WithSeparateExternalFlatten]
+
+        val value = WithSeparateExternalFlatten("external", ExternallyReadWritten(7))
+        val expectedDoc = BSONDocument("name" -> "external", "separateValue" -> 7)
 
         assertEquals(handler.writeTry(value).get, expectedDoc)
         assertEquals(handler.readDocument(expectedDoc).get, value)
@@ -1059,6 +1080,19 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
           KindlingsBsonDocumentHandler.derived[InvalidWriter]
           """
         ).check("Invalid @Writer annotation for field value: BSONWriter[java.lang.String] expected")
+      }
+
+      test("duplicate @Reader annotations fail derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Reader
+          import reactivemongo.api.bson.BSONStringHandler
+
+          final case class DuplicateReader(@Reader(BSONStringHandler) @Reader(BSONStringHandler) value: String)
+          KindlingsBsonDocumentHandler.derived[DuplicateReader]
+          """
+        ).check("At most one @Reader annotation is allowed for field value")
       }
     }
 

@@ -31,7 +31,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | `"handle recursive structure"` / `with recursive auto-materialization` | `recursive structure (Tree)` | |
 | `"support overriding keys with annotations"` | `support overriding keys with annotations` | Uses `@FieldName` instead of `@Key` |
 | `"be generated for class class with self reference"` | `be generated for class with self reference` | |
-| `"support @Flatten annotation"` | `@Flatten merges inner case class fields into parent document`, `@Flatten uses a user-provided BSONDocumentHandler`, `@Flatten on a non-document field fails derivation`, `recursive @Flatten fails derivation`, `mutually recursive @Flatten fails derivation` | Covers derived/external handlers and invalid targets |
+| `"support @Flatten annotation"` | `@Flatten merges inner case class fields into parent document`, `@Flatten uses a user-provided BSONDocumentHandler`, `@Flatten uses separately provided BSONDocumentReader and BSONDocumentWriter`, `@Flatten on a non-document field fails derivation`, `recursive @Flatten fails derivation`, `mutually recursive @Flatten fails derivation` | Covers derived/external handlers and invalid targets |
 | `"support @Reader & @Writer annotations"` | `round-trip with @reader and @writer` | |
 | `"be generated for Value class"` | `be generated for value class` | |
 | Default-value tests | `default values from Scala-level defaults`, `default values from @defaultValue annotation` | |
@@ -106,9 +106,8 @@ the reference). Covered by `FullName discriminator includes enclosing objects` a
 - `@Ignore` combined with `@Reader`/`@Writer` on the same field: not tested;
   `@Ignore` intentionally short-circuits read and write before the custom handler
   is consulted.
-- Invalid `@Reader`/`@Writer` types are rejected at derivation time (`@Reader with
-  the wrong field type fails derivation`, `@Writer with the wrong field type fails
-  derivation`), matching the reference's validation behavior.
+- Invalid or duplicate `@Reader`/`@Writer` annotations are rejected at derivation
+  time, matching the reference's validation behavior.
 
 ### Option BSONNull handling (`"not support type mismatch for optional value"`, `"support null for optional value"`)
 
@@ -120,8 +119,8 @@ type is delegated to the inner `BSONReader` and fails, as in the reference.
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~37 top-level behaviors (79 tests in our suite).
+- **Ported / adapted**: ~39 top-level behaviors (81 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 79 tests currently passing.
+- **Test suite**: 81 tests currently passing.

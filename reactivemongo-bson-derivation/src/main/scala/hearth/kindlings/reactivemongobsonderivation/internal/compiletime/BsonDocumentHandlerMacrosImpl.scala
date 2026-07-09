@@ -34,6 +34,10 @@ trait BsonDocumentHandlerMacrosImpl
     def BsonDocumentHandler: Type.Ctor1[KindlingsBsonDocumentHandler] = Type.Ctor1.of[KindlingsBsonDocumentHandler]
     def ExternalBsonDocumentHandler: Type.Ctor1[reactivemongo.api.bson.BSONDocumentHandler] =
       Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentHandler]
+    def ExternalBsonDocumentReader: Type.Ctor1[reactivemongo.api.bson.BSONDocumentReader] =
+      Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentReader]
+    def ExternalBsonDocumentWriter: Type.Ctor1[reactivemongo.api.bson.BSONDocumentWriter] =
+      Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentWriter]
     val LogDerivation: Type[KindlingsBsonDocumentHandler.LogDerivation] =
       Type.of[KindlingsBsonDocumentHandler.LogDerivation]
     val BsonDocument: Type[BSONDocument] = Type.of[BSONDocument]
@@ -561,6 +565,9 @@ trait BsonDocumentHandlerMacrosImpl
 
   /** Try to extract a @reader-annotated BSONReader for a field. Returns None if no annotation. */
   def annotatedReader[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    val annotationName = "hearth.kindlings.reactivemongobsonderivation.annotations.Reader"
+    if (annotationTypeConstructorCount(param, annotationName) > 1)
+      Environment.reportErrorAndAbort(s"At most one @Reader annotation is allowed for field ${param.name}")
     val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Reader[A]]
     getAnnotationValueUntyped(param)(annTpe) match {
       case Some(untyped) =>
@@ -572,7 +579,7 @@ trait BsonDocumentHandlerMacrosImpl
       case None
           if hasAnnotationTypeConstructor(
             param,
-            "hearth.kindlings.reactivemongobsonderivation.annotations.Reader"
+            annotationName
           ) =>
         Environment.reportErrorAndAbort(
           s"Invalid @Reader annotation for field ${param.name}: BSONReader[${Type[A].prettyPrint}] expected"
@@ -595,13 +602,16 @@ trait BsonDocumentHandlerMacrosImpl
 
   /** Try to extract a @writer-annotated BSONWriter for a field. Returns None if no annotation. */
   def annotatedWriter[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    val annotationName = "hearth.kindlings.reactivemongobsonderivation.annotations.Writer"
+    if (annotationTypeConstructorCount(param, annotationName) > 1)
+      Environment.reportErrorAndAbort(s"At most one @Writer annotation is allowed for field ${param.name}")
     val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Writer[A]]
     getAnnotationValueUntyped(param)(annTpe) match {
       case Some(untyped) => Some(annotateWriterValue[A](untyped))
       case None
           if hasAnnotationTypeConstructor(
             param,
-            "hearth.kindlings.reactivemongobsonderivation.annotations.Writer"
+            annotationName
           ) =>
         Environment.reportErrorAndAbort(
           s"Invalid @Writer annotation for field ${param.name}: BSONWriter[${Type[A].prettyPrint}] expected"
@@ -1377,22 +1387,41 @@ trait BsonDocumentHandlerMacrosImpl
       }
     }
 
-    /** Resolve a document handler for a flattened field. Prefer a user-provided standard `BSONDocumentHandler` before
-      * deriving one, matching ReactiveMongo's flatten behavior for externally-defined field types.
+    /** Resolve a document reader/writer for a flattened field. Prefer user-provided standard document type classes
+      * before deriving one, matching ReactiveMongo's flatten behavior for externally-defined field types.
       */
-    private def resolveFlattenedHandler[Field: Type](
+    private def resolveFlattenedReader[Field: Type](
         fName: String,
         fieldCtx: DerivationCtx[Field]
-    ): MIO[Expr[reactivemongo.api.bson.BSONDocumentHandler[Field]]] = {
-      implicit val HandlerT: Type[reactivemongo.api.bson.BSONDocumentHandler[Field]] =
-        Types.ExternalBsonDocumentHandler[Field]
-      Type[reactivemongo.api.bson.BSONDocumentHandler[Field]]
+    ): MIO[Expr[reactivemongo.api.bson.BSONDocumentReader[Field]]] = {
+      implicit val ReaderT: Type[reactivemongo.api.bson.BSONDocumentReader[Field]] =
+        Types.ExternalBsonDocumentReader[Field]
+      Type[reactivemongo.api.bson.BSONDocumentReader[Field]]
         .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
         .toEither match {
-        case Right(handler)                      => MIO.pure(handler)
+        case Right(reader)                       => MIO.pure(reader)
         case Left(_) if isCaseClassOrEnum[Field] =>
           deriveResultRecursively[Field](fieldCtx)
-            .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONDocumentHandler[Field]]])
+            .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONDocumentReader[Field]]])
+        case Left(_) =>
+          val err = BsonDocumentHandlerDerivationError.CannotFlattenNonDocumentField(fName, Type[Field].prettyPrint)
+          Log.error(err.message) >> MIO.fail(err)
+      }
+    }
+
+    private def resolveFlattenedWriter[Field: Type](
+        fName: String,
+        fieldCtx: DerivationCtx[Field]
+    ): MIO[Expr[reactivemongo.api.bson.BSONDocumentWriter[Field]]] = {
+      implicit val WriterT: Type[reactivemongo.api.bson.BSONDocumentWriter[Field]] =
+        Types.ExternalBsonDocumentWriter[Field]
+      Type[reactivemongo.api.bson.BSONDocumentWriter[Field]]
+        .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+        .toEither match {
+        case Right(writer)                       => MIO.pure(writer)
+        case Left(_) if isCaseClassOrEnum[Field] =>
+          deriveResultRecursively[Field](fieldCtx)
+            .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONDocumentWriter[Field]]])
         case Left(_) =>
           val err = BsonDocumentHandlerDerivationError.CannotFlattenNonDocumentField(fName, Type[Field].prettyPrint)
           Log.error(err.message) >> MIO.fail(err)
@@ -1404,9 +1433,9 @@ trait BsonDocumentHandlerMacrosImpl
         fName: String,
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[Any]]] =
-      resolveFlattenedHandler[Field](fName, fieldCtx).map { handlerExpr =>
+      resolveFlattenedReader[Field](fName, fieldCtx).map { readerExpr =>
         Expr.quote {
-          Expr.splice(handlerExpr).readTry(Expr.splice(docExpr)).asInstanceOf[scala.util.Try[Any]]
+          Expr.splice(readerExpr).readTry(Expr.splice(docExpr)).asInstanceOf[scala.util.Try[Any]]
         }
       }
 
@@ -1617,9 +1646,9 @@ trait BsonDocumentHandlerMacrosImpl
         fieldValue: Expr[Field],
         fieldCtx: DerivationCtx[Field]
     ): MIO[Expr[scala.util.Try[List[Option[reactivemongo.api.bson.BSONElement]]]]] =
-      resolveFlattenedHandler[Field](fName, fieldCtx).map { handlerExpr =>
+      resolveFlattenedWriter[Field](fName, fieldCtx).map { writerExpr =>
         Expr.quote {
-          Expr.splice(handlerExpr).writeTry(Expr.splice(fieldValue)).map { innerDoc =>
+          Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).map { innerDoc =>
             innerDoc.elements.map(e => Some(reactivemongo.api.bson.BSONElement(e.name, e.value))).toList
           }
         }
