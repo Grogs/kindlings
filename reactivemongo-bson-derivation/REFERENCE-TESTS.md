@@ -38,7 +38,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | Map tests | `Map[String, Int]`, `Map with String keys` | |
 | `BSONObjectID` field | `support overriding keys with annotations` | Uses `BSONObjectID` |
 | `@Ignore` field (`"skip ignored fields"`) | `@Ignore field is not serialized` | Uses `@Ignore`; value supplied by default on read, omitted from BSON on write |
-| Non-String map keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`) | `Map[Locale, String]`, `Map[UUID, Int]`, `Map with a user-provided value-class key codec` | Summons built-in and user-provided `KeyReader`/`KeyWriter` instances |
+| Non-String map keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`) | `Map[Locale, String]`, `Map[UUID, Int]`, `Map with a user-provided value-class key codec`, `Map with a non-String key and no key codecs fails derivation` | Requires built-in or user-provided `KeyReader` **and** `KeyWriter` for non-String keys |
 | `@DefaultValue` with `Option[Float]` (`WithDefaultValues2.score`) | `default values from @DefaultValue annotation` | Covariant `defaultValue` + `<:<` lookup |
 | `TypeNaming` tests | `FullName discriminator includes enclosing objects`, `Custom type naming transforms simple name`, `SimpleName discriminator survives nested sealed trait` | Default `FullName`; `SimpleName` opt-in |
 | `@Flatten` nested test | `@Flatten works with nested flattening`, `@Flatten merges inner case class fields into parent document` | Nested positive coverage |
@@ -120,8 +120,8 @@ type is delegated to the inner `BSONReader` and fails, as in the reference.
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~36 top-level behaviors (78 tests in our suite).
+- **Ported / adapted**: ~37 top-level behaviors (79 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 78 tests currently passing.
+- **Test suite**: 79 tests currently passing.
