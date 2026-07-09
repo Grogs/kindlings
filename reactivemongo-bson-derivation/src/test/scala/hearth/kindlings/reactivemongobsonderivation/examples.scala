@@ -74,6 +74,8 @@ final case class FlattenWithCustomIO(
 
 final case class ExternalFlattened(value: Int)
 final case class WithExternalFlatten(name: String, @Flatten external: ExternalFlattened)
+final case class ExternallyReadWritten(value: Int)
+final case class WithSeparateExternalFlatten(name: String, @Flatten external: ExternallyReadWritten)
 
 // TypeNaming
 object TreeModule {

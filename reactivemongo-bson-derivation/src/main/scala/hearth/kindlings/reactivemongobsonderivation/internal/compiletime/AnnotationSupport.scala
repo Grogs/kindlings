@@ -10,6 +10,8 @@ trait AnnotationSupport { this: MacroCommons & StdExtensions =>
   /** Whether a parameter has an annotation with this type constructor, regardless of its type arguments. */
   protected def hasAnnotationTypeConstructor0(param: Parameter, fullName: String): Boolean
 
+  protected def annotationTypeConstructorCount0(param: Parameter, fullName: String): Int
+
   protected def extractStringLiteralFromAnnotation(annotation: UntypedExpr): Option[String]
 
   /** Extracts the single positional argument of a single-argument annotation as an UntypedExpr. Useful for annotations
@@ -22,6 +24,9 @@ trait AnnotationSupport { this: MacroCommons & StdExtensions =>
 
   final def hasAnnotationTypeConstructor(param: Parameter, fullName: String): Boolean =
     hasAnnotationTypeConstructor0(param, fullName)
+
+  final def annotationTypeConstructorCount(param: Parameter, fullName: String): Int =
+    annotationTypeConstructorCount0(param, fullName)
 
   final def getAnnotationStringArg[Ann: Type](param: Parameter): Option[String] =
     findAnnotationOfType[Ann](param).flatMap(extractStringLiteralFromAnnotation)
