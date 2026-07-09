@@ -8,19 +8,18 @@ Our implementation matches the reference on the core behavior: case class read/w
 
 ## Behavioral Differences
 
-### 1. Default values are always applied (not opt-in)
+### 1. Default values are applied on read
 
-**Reference**: `ReadDefaultValues` is required to opt in:
-```scala
-Macros.using[MacroOptions.ReadDefaultValues].reader[Foo]
-// or
-implicit val cfg = MacroConfiguration[MacroOptions.ReadDefaultValues]()
-Macros.reader[Foo]
-```
+**Reference**: The current macro implementation computes a field's Scala default
+or `@DefaultValue` annotation and applies it when the BSON field is absent. While
+`MacroOptions.ReadDefaultValues` remains part of the public API, the current
+Scala 2 and Scala 3 macro implementations do not gate this behavior on that
+option.
 
-**Ours**: Default values are always applied. No opt-in required.
+**Ours**: Same behavior: Scala-level defaults and `@DefaultValue` are applied
+when a BSON field is absent.
 
-This is a friendly difference — users get default values out of the box.
+**Status**: **Done** (matches the current reference implementation).
 
 ### 2. `@NoneAsNull` annotation
 
@@ -71,9 +70,10 @@ it writes `None` as `BSONNull` instead of omitting the field.
 
 ### 7. `@DefaultValue` annotation (per-field default override)
 
-**Reference**: Has `@DefaultValue("default")` annotation that allows specifying a default for fields that don't have a Scala-level default value. Requires `ReadDefaultValues` opt-in.
+**Reference**: Has `@DefaultValue("default")` annotation that allows specifying a default for fields that don't have a Scala-level default value.
 
-**Ours**: `@DefaultValue` annotation supported. Per-field default override works without opt-in (since we always apply defaults, see limitation #1). Accepts a value of the field's type.
+**Ours**: `@DefaultValue` is supported and applied for an absent field, matching
+the current reference behavior. It accepts a value of the field's type.
 
 **Status**: **Done** (see task 8).
 
@@ -91,7 +91,8 @@ it writes `None` as `BSONNull` instead of omitting the field.
 
 **Ours**: We always auto-materialize handlers for sealed-trait members (similar to jsoniter's default).
 
-**Status**: Different default. Ours is more convenient.
+**Status**: Intentional additive difference. It changes whether derivation
+compiles, but not the BSON representation once an instance is available.
 
 ### 10. `DisableWarnings` and `Verbose` options
 
