@@ -30,13 +30,17 @@ This is a friendly difference — users get default values out of the box.
 
 **Status**: **Done** (matches reference).
 
-### 3. `BSONNull` is always treated as `None` on read
+### 3. `BSONNull` is treated as `None` for Option fields on read
 
-**Reference**: Without `@NoneAsNull`, a `BSONNull` value for an Option field would fail to read (the field is expected to be missing, not present as null).
+**Reference**: `BSONDocument.getAsUnflattenedTry` returns `Success(None)` for both
+an absent field and `BSONNull`. The reference `MacroSpec` explicitly covers this
+with `"support null for optional value"`.
 
-**Ours**: We always treat `BSONNull` as `None` (more permissive).
+**Ours**: Same behavior: an absent Option field and an Option field with
+`BSONNull` both decode as `None`.
 
-**Status**: Intentional — more forgiving for users.
+**Status**: **Done** (matches reference). `@NoneAsNull` controls writing only:
+it writes `None` as `BSONNull` instead of omitting the field.
 
 ### 4. Discriminator value uses full (qualified) class name
 
