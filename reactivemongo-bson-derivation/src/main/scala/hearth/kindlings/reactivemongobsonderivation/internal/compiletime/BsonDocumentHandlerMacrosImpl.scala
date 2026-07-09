@@ -1282,7 +1282,16 @@ trait BsonDocumentHandlerMacrosImpl
             MIO.pure(Expr.quote(scala.util.Success(null.asInstanceOf[Field]).asInstanceOf[scala.util.Try[Any]]))
         }
       } else if (isFlattened(param)) {
-        buildFlattenedFieldReadExpr[Field](docExpr, fieldCtx)
+        // A flattened custom reader receives the whole containing document, just like a derived
+        // BSONDocumentHandler would. This matches ReactiveMongo's `@Flatten @Reader(...)` behavior.
+        annotatedReader[Field](param) match {
+          case Some(readerExpr) =>
+            MIO.pure(Expr.quote {
+              Expr.splice(readerExpr).readTry(Expr.splice(docExpr)).asInstanceOf[scala.util.Try[Any]]
+            })
+          case None =>
+            buildFlattenedFieldReadExpr[Field](docExpr, fieldCtx)
+        }
       } else {
         val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
 
@@ -1473,7 +1482,24 @@ trait BsonDocumentHandlerMacrosImpl
         val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
 
         if (isFlattened(param)) {
-          buildFlattenedFieldWriteExpr[Field](fieldValue, fieldCtx)
+          // A flattened custom writer must produce a BSONDocument whose elements can be merged into
+          // the containing document. Reporting a Failure here is clearer than silently dropping or
+          // nesting a non-document BSON value.
+          annotatedWriter[Field](param) match {
+            case Some(writerExpr) =>
+              MIO.pure(Expr.quote {
+                Expr.splice(writerExpr).writeTry(Expr.splice(fieldValue)).flatMap {
+                  case document: BSONDocument =>
+                    scala.util.Success(document.elements.toList.map(Some(_)))
+                  case value =>
+                    scala.util.Failure(
+                      new IllegalArgumentException(s"@Flatten @Writer must produce BSONDocument, got $value")
+                    )
+                }
+              })
+            case None =>
+              buildFlattenedFieldWriteExpr[Field](fieldValue, fieldCtx)
+          }
         } else {
           // @writer annotation: use the provided writer directly
           annotatedWriter[Field](param) match {

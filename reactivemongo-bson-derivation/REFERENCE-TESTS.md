@@ -98,10 +98,12 @@ the reference). Covered by `FullName discriminator includes enclosing objects` a
 ### Specific annotation combinations
 
 - `@Flatten @Writer(...) @Reader(...)` on the same field (`"support @Reader & @Writer annotations"`)
-  **Not ported.** Our current implementation does not support combining `@Flatten`
-  with `@Reader`/`@Writer` on the same field. `@Flatten` takes precedence.
-- `@Ignore` combined with `@Reader`/`@Writer` on the same field: also not tested;
-  `@Ignore` short-circuits read and write before the custom handler is consulted.
+  **Ported** (`@Flatten composes with @Reader and @Writer`). A flattened custom
+  reader receives the containing `BSONDocument`; its custom writer must produce a
+  `BSONDocument`, whose elements are merged into the containing document.
+- `@Ignore` combined with `@Reader`/`@Writer` on the same field: not tested;
+  `@Ignore` intentionally short-circuits read and write before the custom handler
+  is consulted.
 
 ### Strict BSONNull handling for Option (`"not support type mismatch for optional value"`, `"support null for optional value"` with strict semantics)
 
@@ -112,8 +114,8 @@ than the reference (see `REFERENCE-COMPARISON.md` #3).
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~27 top-level behaviors (69 tests in our suite).
+- **Ported / adapted**: ~28 top-level behaviors (70 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 69 tests currently passing.
+- **Test suite**: 70 tests currently passing.
