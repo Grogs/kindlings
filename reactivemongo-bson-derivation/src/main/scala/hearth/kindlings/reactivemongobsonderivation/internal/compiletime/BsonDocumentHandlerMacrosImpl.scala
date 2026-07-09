@@ -1294,8 +1294,14 @@ trait BsonDocumentHandlerMacrosImpl
             MIO.pure(Expr.quote {
               Expr.splice(readerExpr).readTry(Expr.splice(docExpr)).asInstanceOf[scala.util.Try[Any]]
             })
-          case None =>
+          case None if isCaseClassOrEnum[Field] =>
             buildFlattenedFieldReadExpr[Field](docExpr, fieldCtx)
+          case None =>
+            val err = BsonDocumentHandlerDerivationError.CannotFlattenNonDocumentField(
+              fName,
+              Type[Field].prettyPrint
+            )
+            Log.error(err.message) >> MIO.fail(err)
         }
       } else {
         val fNameExpr: Expr[String] = resolveFieldKeyExpr(fName, param, fieldCtx)
@@ -1658,7 +1664,13 @@ trait BsonDocumentHandlerMacrosImpl
                 // field would otherwise round-trip through java.lang.Integer/Boolean via Array[Any]).
                 fieldVarDefsNel <- fieldsNel.parTraverse { case (fName, param) =>
                   import param.tpe.Underlying as Field
-                  buildFieldVarDef[Field](docExpr, fName, param, ctx.nest[Field])
+                  if (isFlattened(param) && Type[Field] =:= Type[A]) {
+                    val err = BsonDocumentHandlerDerivationError.CannotFlattenRecursiveField(
+                      fName,
+                      Type[A].prettyPrint
+                    )
+                    Log.error(err.message) >> MIO.fail(err)
+                  } else buildFieldVarDef[Field](docExpr, fName, param, ctx.nest[Field])
                 }
               } yield {
                 val combinedVars = fieldVarDefsNel.toList.foldLeft(

@@ -27,6 +27,14 @@ object BsonDocumentHandlerDerivationError {
     val message: String =
       s"Cannot ignore field $fieldName: $fieldType needs a Scala default value or @DefaultValue"
   }
+  final case class CannotFlattenRecursiveField(fieldName: String, ownerType: String)
+      extends BsonDocumentHandlerDerivationError {
+    val message: String = s"Cannot flatten recursive field $ownerType.$fieldName"
+  }
+  final case class CannotFlattenNonDocumentField(fieldName: String, fieldType: String)
+      extends BsonDocumentHandlerDerivationError {
+    val message: String = s"Cannot flatten field $fieldName: $fieldType is not a case class or sealed trait"
+  }
   final case class CannotDeriveCollection(fieldType: String, reason: String)
       extends BsonDocumentHandlerDerivationError {
     val message: String = s"Cannot derive collection handler for $fieldType: $reason"
