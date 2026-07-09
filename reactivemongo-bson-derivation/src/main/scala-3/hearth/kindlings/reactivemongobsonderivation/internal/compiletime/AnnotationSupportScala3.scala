@@ -13,6 +13,9 @@ trait AnnotationSupportScala3 extends AnnotationSupport { this: MacroCommonsScal
     }
   }
 
+  override protected def hasAnnotationTypeConstructor0(param: Parameter, fullName: String): Boolean =
+    param.asUntyped.annotations.exists(_.tpe.typeSymbol.fullName == fullName)
+
   override protected def extractStringLiteralFromAnnotation(annotation: UntypedExpr): Option[String] =
     annotation match {
       case Apply(_, List(Literal(StringConstant(value)))) => Some(value)

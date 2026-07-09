@@ -522,12 +522,22 @@ trait BsonDocumentHandlerMacrosImpl
   /** Try to extract a @reader-annotated BSONReader for a field. Returns None if no annotation. */
   def annotatedReader[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
     val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Reader[A]]
-    getAnnotationValueUntyped(param)(annTpe).map { untyped =>
-      // The annotation argument is a BSONReader[A]-typed value, but UntypedExpr loses the type.
-      // Wrap it in a quote that upcasts to the expected reader type. The `.asInstanceOf` keeps the
-      // path through `Expr.splice` stable across Scala 2 and 3; using `asTyped[...]` here instead
-      // triggers Hearth's "Nested context should not loop" (-Xcheck-macros) on Scala 3.
-      annotateReaderValue[A](untyped)
+    getAnnotationValueUntyped(param)(annTpe) match {
+      case Some(untyped) =>
+        // The annotation argument is a BSONReader[A]-typed value, but UntypedExpr loses the type.
+        // Wrap it in a quote that upcasts to the expected reader type. The `.asInstanceOf` keeps the
+        // path through `Expr.splice` stable across Scala 2 and 3; using `asTyped[...]` here instead
+        // triggers Hearth's "Nested context should not loop" (-Xcheck-macros) on Scala 3.
+        Some(annotateReaderValue[A](untyped))
+      case None
+          if hasAnnotationTypeConstructor(
+            param,
+            "hearth.kindlings.reactivemongobsonderivation.annotations.Reader"
+          ) =>
+        Environment.reportErrorAndAbort(
+          s"Invalid @Reader annotation for field ${param.name}: BSONReader[${Type[A].prettyPrint}] expected"
+        )
+      case None => None
     }
   }
 
@@ -546,8 +556,17 @@ trait BsonDocumentHandlerMacrosImpl
   /** Try to extract a @writer-annotated BSONWriter for a field. Returns None if no annotation. */
   def annotatedWriter[A: Type](param: Parameter): Option[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
     val annTpe = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Writer[A]]
-    getAnnotationValueUntyped(param)(annTpe).map { untyped =>
-      annotateWriterValue[A](untyped)
+    getAnnotationValueUntyped(param)(annTpe) match {
+      case Some(untyped) => Some(annotateWriterValue[A](untyped))
+      case None
+          if hasAnnotationTypeConstructor(
+            param,
+            "hearth.kindlings.reactivemongobsonderivation.annotations.Writer"
+          ) =>
+        Environment.reportErrorAndAbort(
+          s"Invalid @Writer annotation for field ${param.name}: BSONWriter[${Type[A].prettyPrint}] expected"
+        )
+      case None => None
     }
   }
 

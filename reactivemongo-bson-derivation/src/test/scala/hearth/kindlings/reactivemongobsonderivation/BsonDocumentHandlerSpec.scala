@@ -992,6 +992,32 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
           """
         ).check("Cannot flatten field value: java.lang.String is not a case class or sealed trait")
       }
+
+      test("@Reader with the wrong field type fails derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Reader
+          import reactivemongo.api.bson.BSONIntegerHandler
+
+          final case class InvalidReader(@Reader(BSONIntegerHandler) value: String)
+          KindlingsBsonDocumentHandler.derived[InvalidReader]
+          """
+        ).check("Invalid @Reader annotation for field value: BSONReader[java.lang.String] expected")
+      }
+
+      test("@Writer with the wrong field type fails derivation") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import hearth.kindlings.reactivemongobsonderivation.annotations.Writer
+          import reactivemongo.api.bson.BSONIntegerHandler
+
+          final case class InvalidWriter(@Writer(BSONIntegerHandler) value: String)
+          KindlingsBsonDocumentHandler.derived[InvalidWriter]
+          """
+        ).check("Invalid @Writer annotation for field value: BSONWriter[java.lang.String] expected")
+      }
     }
 
   }
