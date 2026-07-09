@@ -218,6 +218,7 @@ case class Order(quantity: Int Refined Positive, item: String)
 | [kindlings-fast-show-pretty](fast-show-pretty.md) | _(original)_ | `FastShowPretty` |
 | [kindlings-jsoniter-derivation](jsoniter-derivation.md) | jsoniter-scala `JsonCodecMaker` | `JsonValueCodec`, `JsonCodec`, `JsonKeyCodec` |
 | [kindlings-pureconfig-derivation](pureconfig-derivation.md) | PureConfig generic (JVM only) | `ConfigReader`, `ConfigWriter`, `ConfigConvert` |
+| [kindlings-reactivemongo-bson-derivation](reactivemongo-bson-derivation.md) | ReactiveMongo BSON macros (JVM only) | `BSONDocumentHandler` |
 | [kindlings-scalacheck-derivation](scalacheck-derivation.md) | manual instances | `Arbitrary`, `Cogen`, `Shrink` |
 | [kindlings-sconfig-derivation](sconfig-derivation.md) | _(original)_ | `ConfigReader`, `ConfigWriter`, `ConfigCodec` |
 | [kindlings-tapir-schema-derivation](tapir-schema-derivation.md) | Tapir `Schema.derived` | `Schema` |
@@ -225,7 +226,7 @@ case class Order(quantity: Int Refined Positive, item: String)
 | [kindlings-xml-derivation](xml-derivation.md) | _(original)_ | `XmlEncoder`, `XmlDecoder` |
 | [kindlings-yaml-derivation](yaml-derivation.md) | scala-yaml `derives` | `YamlEncoder`, `YamlDecoder` |
 
-All modules are cross-compiled for Scala 2.13 and 3, on JVM, Scala.js, and Scala Native — except `kindlings-avro-derivation` and `kindlings-pureconfig-derivation`, which are JVM-only.
+All modules are cross-compiled for Scala 2.13 and 3, on JVM, Scala.js, and Scala Native — except `kindlings-avro-derivation`, `kindlings-pureconfig-derivation`, and `kindlings-reactivemongo-bson-derivation`, which are JVM-only.
 
 ## Integrations
 
