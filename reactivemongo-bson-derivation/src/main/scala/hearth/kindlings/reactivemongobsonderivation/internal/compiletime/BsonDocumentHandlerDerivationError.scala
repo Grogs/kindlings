@@ -22,6 +22,11 @@ object BsonDocumentHandlerDerivationError {
   final case class CannotDeriveField(fieldType: String, reason: String) extends BsonDocumentHandlerDerivationError {
     val message: String = s"Cannot derive field reader/writer for $fieldType: $reason"
   }
+  final case class CannotIgnoreFieldWithoutDefault(fieldName: String, fieldType: String)
+      extends BsonDocumentHandlerDerivationError {
+    val message: String =
+      s"Cannot ignore field $fieldName: $fieldType needs a Scala default value or @DefaultValue"
+  }
   final case class CannotDeriveCollection(fieldType: String, reason: String)
       extends BsonDocumentHandlerDerivationError {
     val message: String = s"Cannot derive collection handler for $fieldType: $reason"

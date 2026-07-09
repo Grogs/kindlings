@@ -82,7 +82,8 @@ behavior and the associated warning-suppression tests do not apply.
 ### `@Ignore` annotation (`"skip ignored fields"`)
 
 **Ported** (`@Ignore field is not serialized`). An `@Ignore`d field is omitted
-from the written BSON and receives its default value (or null) on read.
+from the written BSON and receives its Scala default value or `@DefaultValue` on
+read. Derivation fails when no default is available, matching the reference.
 
 ### Case class with refinement type as field (`"handle case class with refinement type as field"`)
 
@@ -116,8 +117,8 @@ type is delegated to the inner `BSONReader` and fails, as in the reference.
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~29 top-level behaviors (71 tests in our suite).
+- **Ported / adapted**: ~30 top-level behaviors (72 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 71 tests currently passing.
+- **Test suite**: 72 tests currently passing.
