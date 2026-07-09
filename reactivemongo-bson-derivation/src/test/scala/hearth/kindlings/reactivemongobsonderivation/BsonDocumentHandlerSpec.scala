@@ -394,6 +394,31 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       }
     }
 
+    group("custom implicit field handlers") {
+
+      test("custom handlers work for refinement-typed fields") {
+        implicit val prefKindReader: BSONReader[PrefKind.Aux[String]] = BSONReader.from { bsonValue =>
+          bsonValue match {
+            case BSONString(name) => scala.util.Success(PrefKind.of[String](name))
+            case other => scala.util.Failure(new IllegalArgumentException(s"Expected BSONString, got $other"))
+          }
+        }
+        implicit val prefKindWriter: BSONWriter[PrefKind.Aux[String]] = BSONWriter.from { kind =>
+          scala.util.Success(BSONString(kind.name))
+        }
+
+        @scala.annotation.nowarn("msg=is never used|unused")
+        val handler: KindlingsBsonDocumentHandler[Preference[String]] =
+          KindlingsBsonDocumentHandler.derived[Preference[String]]
+
+        val value = Preference("_id", PrefKind.of[String]("ID"), "unique")
+        val document = BSONDocument("key" -> "_id", "kind" -> "ID", "value" -> "unique")
+
+        assertEquals(handler.readDocument(document).get, value)
+        assertEquals(handler.writeTry(value).get, document)
+      }
+    }
+
     group("per-field reader / writer annotations") {
 
       test("@reader uses the provided BSONReader") {

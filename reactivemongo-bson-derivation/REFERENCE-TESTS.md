@@ -38,7 +38,7 @@ The following `MacroSpec` tests are covered by our test suite:
 | Map tests | `Map[String, Int]`, `Map with String keys` | |
 | `BSONObjectID` field | `support overriding keys with annotations` | Uses `BSONObjectID` |
 | `@Ignore` field (`"skip ignored fields"`) | `@Ignore field is not serialized` | Uses `@Ignore`; value supplied by default on read, omitted from BSON on write |
-| Non-String map keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`) | `Map[Locale, String]`, `Map[UUID, Int]` | Sums `KeyReader`/`KeyWriter` for non-String keys |
+| Non-String map keys (`WithMap1[java.util.Locale, String]`, `WithMap2[FooVal, String]`) | `Map[Locale, String]`, `Map[UUID, Int]`, `Map with a user-provided value-class key codec` | Summons built-in and user-provided `KeyReader`/`KeyWriter` instances |
 | `@DefaultValue` with `Option[Float]` (`WithDefaultValues2.score`) | `default values from @DefaultValue annotation` | Covariant `defaultValue` + `<:<` lookup |
 | `TypeNaming` tests | `FullName discriminator includes enclosing objects`, `Custom type naming transforms simple name`, `SimpleName discriminator survives nested sealed trait` | Default `FullName`; `SimpleName` opt-in |
 | `@Flatten` nested test | `@Flatten works with nested flattening`, `@Flatten merges inner case class fields into parent document` | Positive cases only |
@@ -85,9 +85,9 @@ from the written BSON and receives its default value (or null) on read.
 
 ### Case class with refinement type as field (`"handle case class with refinement type as field"`)
 
-**Not ported.** This test relies on a custom `BSONHandler[PrefKind]` implicit
-for a type with a refinement (`PrefKind.Aux[V]`). Porting it would require
-reproducing the custom implicit setup rather than testing our macro.
+**Ported** (`custom handlers work for refinement-typed fields`). The test supplies
+custom `BSONReader`/`BSONWriter` instances for `PrefKind.Aux[String]`, verifying
+that user-provided handlers take precedence over automatic derivation.
 
 ### Nested traits with full-name discriminator (`"support automatic implementations search with nested traits"`)
 
@@ -108,18 +108,12 @@ the reference). Covered by `FullName discriminator includes enclosing objects` a
 **Not ported.** We always decode `BSONNull` as `None` and are more permissive
 than the reference (see `REFERENCE-COMPARISON.md` #3).
 
-### Notes on individual gaps
-
-- **`FooVal`-as-`Map`-key with a custom `KeyReader`**: not ported (the reference
-  test `WithMap2[FooVal, String]` operates on a value class whose key codec we do
-  not pre-summon). Low priority; users can supply their own `KeyReader[FooVal]`.
-
 ## Coverage summary
 
 - **Total reference `MacroSpec` test cases**: ~75 top-level test groups, ~199
   individual assertions (including nested `in` blocks).
-- **Ported / adapted**: ~25 top-level behaviors (67 tests in our suite).
+- **Ported / adapted**: ~27 top-level behaviors (69 tests in our suite).
 - **Skipped**: features we explicitly decided not to support (`UnionType`,
   separate Reader/Writer derivation, strict `BSONNull` on un-annotated fields).
 - **Intentional differences**: see `REFERENCE-COMPARISON.md` for the complete list.
-- **Test suite**: 67 tests currently passing.
+- **Test suite**: 69 tests currently passing.

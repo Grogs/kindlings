@@ -156,6 +156,16 @@ final case class WithFooValMap(values: Map[FooVal, String])
 
 final class FooVal(val v: Int) extends AnyVal
 final case class Item(name: String, number: FooVal)
+
+final case class PrefKind(name: String) {
+  type ValueType
+}
+object PrefKind {
+  type Aux[V] = PrefKind { type ValueType = V }
+
+  def of[V](name: String): Aux[V] = PrefKind(name).asInstanceOf[Aux[V]]
+}
+final case class Preference[V](key: String, kind: PrefKind.Aux[V], value: V)
 final case class Person2(name: String, age: Int, phoneNum: Long, itemList: Seq[Item], list: Seq[Int])
 
 final case class WithValueClass(value: Int) extends AnyVal
