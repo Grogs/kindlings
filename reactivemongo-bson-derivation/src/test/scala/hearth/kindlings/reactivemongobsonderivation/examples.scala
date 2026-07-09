@@ -152,6 +152,7 @@ final case class WithDefaultValues2(
 final case class WithMap1(name: String, localizedDescription: Map[String, String])
 final case class WithLocaleMap(name: String, localizedDescription: Map[java.util.Locale, String])
 final case class WithUUIDMap(items: Map[java.util.UUID, Int])
+final case class WithFooValMap(values: Map[FooVal, String])
 
 final class FooVal(val v: Int) extends AnyVal
 final case class Item(name: String, number: FooVal)
