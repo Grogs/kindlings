@@ -161,6 +161,10 @@ sealed trait Shape
 case class Circle(radius: Double) extends Shape
 case class Square(side: Double) extends Shape
 
+// The default is TypeNaming.FullName. Use short names when that is your wire format.
+implicit val config: BsonDocumentHandlerConfig =
+  BsonDocumentHandlerConfig.default.withTypeNaming(TypeNaming.SimpleName)
+
 val shapeHandler = KindlingsBsonDocumentHandler.derived[Shape]
 shapeHandler.writeTry(Circle(2.5)).get
 // BSONDocument("className" -> "Circle", "radius" -> 2.5)
