@@ -19,6 +19,21 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(inlineDocument, handler.writeTry(value).get)
     }
 
+    test("inline write handles nested records") {
+      val value = PersonWithAddress("Bob", Address("123 Main St", "Springfield"))
+      assertEquals(
+        KindlingsBsonDocumentHandler.write(value).get,
+        BSONDocument("name" -> "Bob", "address" -> BSONDocument("street" -> "123 Main St", "city" -> "Springfield"))
+      )
+    }
+
+    test("inline write handles sealed traits") {
+      assertEquals(
+        KindlingsBsonDocumentHandler.write[SimpleEnum](Foo).get,
+        BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Foo")
+      )
+    }
+
     test("root derivation honors a BSONDocumentHandler implicit") {
       implicit val external: BSONDocumentHandler[Person] = BSONDocumentHandler[Person](
         _ => Person("from external", 0),
