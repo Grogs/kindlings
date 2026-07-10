@@ -19,6 +19,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(inlineDocument, handler.writeTry(value).get)
     }
 
+    test("inline write handles value types, options, and empty records") {
+      assertEquals(KindlingsBsonDocumentHandler.write(WrapperId(7)).get, BSONDocument("value" -> 7))
+      val optionHandler = KindlingsBsonDocumentHandler.derived[Option[Int]]
+      assertEquals(KindlingsBsonDocumentHandler.write[Option[Int]](Some(3)).get, optionHandler.writeTry(Some(3)).get)
+      assertEquals(KindlingsBsonDocumentHandler.write[Option[Int]](None).get, optionHandler.writeTry(None).get)
+      assertEquals(KindlingsBsonDocumentHandler.write(Empty()).get, BSONDocument.empty)
+    }
+
     test("inline write handles nested records") {
       val value = PersonWithAddress("Bob", Address("123 Main St", "Springfield"))
       assertEquals(

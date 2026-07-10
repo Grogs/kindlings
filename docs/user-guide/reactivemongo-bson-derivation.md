@@ -44,6 +44,17 @@ println(FastShowPretty.render(handler.readDocument(document).get, RenderConfig.D
 
 `derived[A]` also supports sanely-automatic derivation: place a derived instance in a companion object or implicit scope and it is used for nested fields.
 
+### Inline writing
+
+When only serialization is needed, `KindlingsBsonDocumentHandler.write(value)` is a supported inline alternative. It emits the BSON write path directly instead of allocating a handler instance:
+
+```scala
+val document = KindlingsBsonDocumentHandler.write(Person("Alice", 30)).get
+assert(document == BSONDocument("name" -> "Alice", "age" -> 30))
+```
+
+It uses the same implicit `BsonDocumentHandlerConfig` and honors an existing `BSONDocumentHandler[A]`.
+
 ## Supported types
 
 | Type | Notes |

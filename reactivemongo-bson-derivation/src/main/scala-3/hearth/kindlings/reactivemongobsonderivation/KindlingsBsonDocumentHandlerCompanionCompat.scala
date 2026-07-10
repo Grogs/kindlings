@@ -7,6 +7,9 @@ private[reactivemongobsonderivation] trait KindlingsBsonDocumentHandlerCompanion
     internal.compiletime.BsonDocumentHandlerMacros.deriveTypeClassImpl[A]('config)
   }
 
+  /** Serialize `value` directly. Unlike `derived[A].writeTry(value)`, this inline API emits only the BSON write path
+    * and does not allocate a `KindlingsBsonDocumentHandler`.
+    */
   inline def write[A](inline value: A)(using
       config: BsonDocumentHandlerConfig
   ): scala.util.Try[reactivemongo.api.bson.BSONDocument] =
