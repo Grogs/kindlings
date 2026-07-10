@@ -10,11 +10,18 @@ final private[reactivemongobsonderivation] class BsonDocumentHandlerMacros(val c
     with BsonDocumentHandlerMacrosImpl {
 
   override protected def fullNameOf[A: c.WeakTypeTag]: String = {
-    val sym       = c.weakTypeOf[A].typeSymbol
-    val fullName  = sym.fullName
+    val sym = c.weakTypeOf[A].typeSymbol
+    val fullName = sym.fullName
     // Hearth/the reference strip trailing `$` on module classes and join outer objects with `.`.
     fullName.split(Array('.', '$')).filter(_.nonEmpty).mkString(".")
   }
+
+  def deriveInlineImpl[A: c.WeakTypeTag](
+      value: c.Expr[A]
+  )(
+      config: c.Expr[BsonDocumentHandlerConfig]
+  ): c.Expr[scala.util.Try[reactivemongo.api.bson.BSONDocument]] =
+    deriveInline[A](value, config).asInstanceOf[c.Expr[scala.util.Try[reactivemongo.api.bson.BSONDocument]]]
 
   def deriveTypeClassImpl[A: c.WeakTypeTag](
       config: c.Expr[BsonDocumentHandlerConfig]

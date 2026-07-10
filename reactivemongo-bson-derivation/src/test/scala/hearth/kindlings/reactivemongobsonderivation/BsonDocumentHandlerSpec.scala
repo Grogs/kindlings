@@ -11,6 +11,13 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
   group("KindlingsBsonDocumentHandler") {
 
+    test("inline write entry point") {
+      assertEquals(
+        KindlingsBsonDocumentHandler.write(Person("Alice", 30)).get,
+        BSONDocument("name" -> "Alice", "age" -> 30)
+      )
+    }
+
     test("derive for empty case class") {
       @scala.annotation.nowarn("msg=is never used|unused")
       val handler: KindlingsBsonDocumentHandler[Empty] = KindlingsBsonDocumentHandler.derived[Empty]
@@ -329,6 +336,25 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         val written = handler.writeTry(Foo).get
         val readBack = handler.readDocument(written).get
         assertEquals(readBack, Foo)
+      }
+
+      test("strict child decoding accepts the enum discriminator") {
+        implicit val config: BsonDocumentHandlerConfig = BsonDocumentHandlerConfig(skipUnexpectedFields = false)
+        val handler: KindlingsBsonDocumentHandler[Expr] = KindlingsBsonDocumentHandler.derived[Expr]
+
+        assertEquals(
+          handler
+            .readDocument(
+              BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Num", "value" -> 42)
+            )
+            .get,
+          Num(42)
+        )
+      }
+
+      test("sealed child writer failures are returned") {
+        val handler: KindlingsBsonDocumentHandler[WriteFailure] = KindlingsBsonDocumentHandler.derived[WriteFailure]
+        assert(handler.writeTry(Broken("boom")).isFailure)
       }
 
       test("unknown discriminator fails") {

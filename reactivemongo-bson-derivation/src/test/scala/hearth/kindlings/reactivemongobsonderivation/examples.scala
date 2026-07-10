@@ -108,6 +108,14 @@ case class Num(value: Int) extends Expr
 case class Str(value: String) extends Expr
 case object NoExpr extends Expr
 
+object FailingWriter {
+  val instance: reactivemongo.api.bson.BSONWriter[String] = reactivemongo.api.bson.BSONWriter.from { _ =>
+    scala.util.Failure(new IllegalArgumentException("writer failed"))
+  }
+}
+sealed trait WriteFailure
+final case class Broken(@Writer(FailingWriter.instance) value: String) extends WriteFailure
+
 // Field name mapping
 final case class CamelCaseFields(firstName: String, lastName: String, ageInYears: Int)
 final case class SnakeFields(first_name: String, last_name: String)

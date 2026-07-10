@@ -17,11 +17,20 @@ import scala.util.Try
 
 trait BsonDocumentHandlerMacrosImpl
     extends hearth.kindlings.derivation.compiletime.DerivationTimeout
+    with hearth.kindlings.derivation.compiletime.DerivationPolicy
     with hearth.kindlings.derivation.compiletime.LoadStandardExtensionsOnce
     with hearth.kindlings.derivation.compiletime.MethodFolds {
   this: MacroCommons & StdExtensions & AnnotationSupport =>
 
   override protected def derivationSettingsNamespace: String = "reactivemongoBsonDerivation"
+
+  override protected def derivationPolicyTypeClassName: String = "KindlingsBsonDocumentHandler"
+  override protected def derivationOptInImportHint: String =
+    "import hearth.kindlings.reactivemongobsonderivation.policy.allowDerivationForReactiveMongoBson"
+  override protected def isDerivationOptInMarkerInScope: Boolean = {
+    implicit val AllowDerivation: Type[KindlingsBsonDocumentHandler.AllowDerivation] = Types.AllowDerivation
+    Expr.summonImplicit[KindlingsBsonDocumentHandler.AllowDerivation].isDefined
+  }
 
   // Types
 
@@ -38,6 +47,8 @@ trait BsonDocumentHandlerMacrosImpl
       Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentWriter]
     val LogDerivation: Type[KindlingsBsonDocumentHandler.LogDerivation] =
       Type.of[KindlingsBsonDocumentHandler.LogDerivation]
+    val AllowDerivation: Type[KindlingsBsonDocumentHandler.AllowDerivation] =
+      Type.of[KindlingsBsonDocumentHandler.AllowDerivation]
     val BsonDocument: Type[BSONDocument] = Type.of[BSONDocument]
     val String: Type[String] = Type.of[String]
     val BsonValue: Type[reactivemongo.api.bson.BSONValue] = Type.of[reactivemongo.api.bson.BSONValue]
@@ -100,6 +111,10 @@ trait BsonDocumentHandlerMacrosImpl
 
   /** Try to extract the underlying String from an Expr[String] if it's a literal. */
   private def extractStringLiteral(expr: Expr[String]): Option[String] = expr.value
+
+  /** Builds a regular quoted lambda. LambdaBuilder is deliberately reserved for collection iteration helpers. */
+  private def directLambda[A: Type, B: Type](body: Expr[A] => Expr[B]): Expr[A => B] =
+    Expr.quote((value: A) => Expr.splice(body(Expr.quote(value))))
 
   /** Build an expression that checks for unexpected fields in the BSON document.
     *
@@ -167,6 +182,18 @@ trait BsonDocumentHandlerMacrosImpl
   }
 
   // Entrypoints
+
+  /** Inline write entry point. It shares the derivation pipeline with `derived` while exposing the generated BSON write
+    * body directly to callers that only need serialization.
+    */
+  def deriveInline[A: Type](
+      valueExpr: Expr[A],
+      configExpr: Expr[BsonDocumentHandlerConfig]
+  ): Expr[Try[BSONDocument]] = {
+    implicit val TryBsonDocument: Type[Try[BSONDocument]] = Types.TryBsonDocument
+    val handler = deriveTypeClass[A](configExpr)
+    Expr.quote(Expr.splice(handler).writeTry(Expr.splice(valueExpr)))
+  }
 
   def deriveTypeClass[A: Type](
       configExpr: Expr[BsonDocumentHandlerConfig]
@@ -663,13 +690,18 @@ trait BsonDocumentHandlerMacrosImpl
         )(_ => instance)
     }
 
-    def getHelper[B: Type]: MIO[Option[Expr[KindlingsBsonDocumentHandler[B]]]] = {
+    def getHelper[B: Type]: MIO[Option[Expr[Unit] => Expr[KindlingsBsonDocumentHandler[B]]]] = {
+      implicit val UnitT: Type[Unit] = Type.of[Unit]
       implicit val HandlerB: Type[KindlingsBsonDocumentHandler[B]] = Types.BsonDocumentHandler[B]
-      cache.get0Ary[KindlingsBsonDocumentHandler[B]]("cached-handler-method")
+      cache.get1Ary[Unit, KindlingsBsonDocumentHandler[B]]("cached-handler-method")
     }
     def setHelper[B: Type](helper: MIO[Expr[KindlingsBsonDocumentHandler[B]]]): MIO[Unit] = {
+      implicit val UnitT: Type[Unit] = Type.of[Unit]
       implicit val HandlerB: Type[KindlingsBsonDocumentHandler[B]] = Types.BsonDocumentHandler[B]
-      val defBuilder = ValDefBuilder.ofLazy[KindlingsBsonDocumentHandler[B]](s"handler_${Type[B].shortName}")
+      val defBuilder = ValDefBuilder.ofDef1[Unit, KindlingsBsonDocumentHandler[B]](
+        s"handler_${Type[B].shortName}",
+        "unit"
+      )
       for {
         _ <- Log.info(s"Forward-declaring BSONDocumentHandler helper for ${Type[B].prettyPrint}")
         _ <- cache.forwardDeclare("cached-handler-method", defBuilder)
@@ -716,7 +748,7 @@ trait BsonDocumentHandlerMacrosImpl
   def deriveResultRecursively[A: DerivationCtx]: MIO[Expr[KindlingsBsonDocumentHandler[A]]] =
     ctx.getHelper[A].flatMap {
       case Some(helperCall) =>
-        Log.info(s"Using cached helper for ${Type[A].prettyPrint}") >> MIO.pure(helperCall)
+        Log.info(s"Using cached helper for ${Type[A].prettyPrint}") >> MIO.pure(helperCall(Expr.quote(())))
       case None =>
         ctx.getInstance[A].flatMap {
           case Some(instance) =>
@@ -728,7 +760,7 @@ trait BsonDocumentHandlerMacrosImpl
                 // Go through setHelper/getHelper to support recursive types.
                 ctx.setHelper[A](deriveResultRecursivelyViaRules[A]) >>
                   ctx.getHelper[A].flatMap {
-                    case Some(helperCall) => MIO.pure(helperCall)
+                    case Some(helperCall) => MIO.pure(helperCall(Expr.quote(())))
                     case None => MIO.fail(new Exception(s"Failed to build helper for ${Type[A].prettyPrint}"))
                   }
             }
@@ -751,6 +783,7 @@ trait BsonDocumentHandlerMacrosImpl
     Log.namedScope(s"Deriving BSONDocumentHandler for type ${Type[A].prettyPrint}") {
       Rules(
         UseImplicitWhenAvailableRule,
+        DerivationPolicyRule,
         HandleAsValueTypeRule,
         HandleAsCollectionRule,
         HandleAsOptionRule,
@@ -788,6 +821,11 @@ trait BsonDocumentHandlerMacrosImpl
     }
   }
 
+  object DerivationPolicyRule extends DerivationRule("derivation policy") {
+    def apply[A: DerivationCtx]: MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] =
+      checkDerivationPolicyOncePerExpansion(Type[A].prettyPrint).map(_ => Rule.yielded())
+  }
+
   object HandleAsValueTypeRule extends DerivationRule("handle as value type") {
     def apply[A: DerivationCtx]: MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] =
       if (Type[A].isNamedTuple)
@@ -796,76 +834,60 @@ trait BsonDocumentHandlerMacrosImpl
         Type[A] match {
           case IsValueType(isValueType) =>
             import isValueType.Underlying as Inner
-            Log.info(s"Handling ${Type[A].prettyPrint} as value type wrapping ${Type[Inner].prettyPrint}") >>
-              LambdaBuilder
-                .of1[Inner]("inner")
-                .traverse { innerExpr =>
-                  isValueType.value.wrap match {
-                    case _: CtorLikeOf.PlainValue[?, ?] =>
-                      MIO.pure(isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[A]])
-                    case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
-                      val wrapResult = isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Either[String, A]]]
-                      MIO.pure(Expr.quote {
-                        Expr.splice(wrapResult) match {
-                          case scala.Right(v)  => v
-                          case scala.Left(msg) => throw new IllegalArgumentException(msg)
-                        }
-                      })
-                    case _ =>
-                      MIO.pure(isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[A]])
-                  }
-                }
-                .flatMap { wrapBuilder =>
-                  val wrapLambda = wrapBuilder.build[A]
-                  // Build an unwrap lambda at compile time (same pattern as wrap lambda)
-                  // This avoids any runtime asInstanceOf - the lambda accesses .value directly
-                  val unwrapFn: Expr[A] => Expr[Inner] = isValueType.value.unwrap
-                  LambdaBuilder
-                    .of1[A]("value")
-                    .traverse(valueExpr => MIO.pure(unwrapFn(valueExpr)))
-                    .map(_.build[Inner])
-                    .flatMap { unwrapLambda =>
-                      // Try to summon BSONReader/BSONWriter for the inner type first
-                      val readerWriterMIO = {
-                        implicit val readerType: Type[reactivemongo.api.bson.BSONReader[Inner]] =
-                          Types.BsonReader[Inner]
-                        implicit val writerType: Type[reactivemongo.api.bson.BSONWriter[Inner]] =
-                          Types.BsonWriter[Inner]
-                        (
-                          Type[reactivemongo.api.bson.BSONReader[Inner]].summonExprIgnoring().toOption,
-                          Type[reactivemongo.api.bson.BSONWriter[Inner]].summonExprIgnoring().toOption
-                        ) match {
-                          case (Some(r), Some(w)) => MIO.pure((r, w))
-                          case _                  =>
-                            // Fall back to full derivation (for nested case classes)
-                            deriveResultRecursively[Inner](using ctx.nest[Inner]).map { h =>
-                              (
-                                h.asInstanceOf[Expr[reactivemongo.api.bson.BSONReader[Inner]]],
-                                h.asInstanceOf[Expr[reactivemongo.api.bson.BSONWriter[Inner]]]
-                              )
-                            }
-                        }
-                      }
-                      readerWriterMIO.map { case (innerReaderExpr, innerWriterExpr) =>
-                        Expr.quote {
-                          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                            .handlerInstance[A](
-                              (doc: BSONDocument) =>
-                                Expr
-                                  .splice(innerReaderExpr)
-                                  .readTry(doc.get("value").getOrElse(reactivemongo.api.bson.BSONNull))
-                                  .map(innerValue => Expr.splice(wrapLambda).apply(innerValue)),
-                              (value: A) =>
-                                Expr
-                                  .splice(innerWriterExpr)
-                                  .writeTry(Expr.splice(unwrapLambda)(value))
-                                  .map(bsonValue => BSONDocument("value" -> bsonValue))
-                            )
-                        }
+            Log.info(s"Handling ${Type[A].prettyPrint} as value type wrapping ${Type[Inner].prettyPrint}") >> {
+              val wrapLambda = directLambda[Inner, A] { innerExpr =>
+                isValueType.value.wrap match {
+                  case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
+                    val wrapped = isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Either[String, A]]]
+                    Expr.quote {
+                      Expr.splice(wrapped) match {
+                        case scala.Right(value)  => value
+                        case scala.Left(message) => throw new IllegalArgumentException(message)
                       }
                     }
+                  case _ => isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[A]]
                 }
-                .map(Rule.matched)
+              }
+              val unwrapLambda = directLambda[A, Inner](isValueType.value.unwrap)
+              // Try to summon BSONReader/BSONWriter for the inner type first
+              val readerWriterMIO = {
+                implicit val readerType: Type[reactivemongo.api.bson.BSONReader[Inner]] =
+                  Types.BsonReader[Inner]
+                implicit val writerType: Type[reactivemongo.api.bson.BSONWriter[Inner]] =
+                  Types.BsonWriter[Inner]
+                (
+                  Type[reactivemongo.api.bson.BSONReader[Inner]].summonExprIgnoring().toOption,
+                  Type[reactivemongo.api.bson.BSONWriter[Inner]].summonExprIgnoring().toOption
+                ) match {
+                  case (Some(r), Some(w)) => MIO.pure((r, w))
+                  case _                  =>
+                    // Fall back to full derivation (for nested case classes)
+                    deriveResultRecursively[Inner](using ctx.nest[Inner]).map { h =>
+                      (
+                        h.asInstanceOf[Expr[reactivemongo.api.bson.BSONReader[Inner]]],
+                        h.asInstanceOf[Expr[reactivemongo.api.bson.BSONWriter[Inner]]]
+                      )
+                    }
+                }
+              }
+              readerWriterMIO.map { case (innerReaderExpr, innerWriterExpr) =>
+                Rule.matched(Expr.quote {
+                  hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                    .handlerInstance[A](
+                      (doc: BSONDocument) =>
+                        Expr
+                          .splice(innerReaderExpr)
+                          .readTry(doc.get("value").getOrElse(reactivemongo.api.bson.BSONNull))
+                          .map(innerValue => Expr.splice(wrapLambda).apply(innerValue)),
+                      (value: A) =>
+                        Expr
+                          .splice(innerWriterExpr)
+                          .writeTry(Expr.splice(unwrapLambda)(value))
+                          .map(bsonValue => BSONDocument("value" -> bsonValue))
+                    )
+                })
+              }
+            }
           case _ =>
             MIO.pure(Rule.yielded(s"${Type[A].prettyPrint} is not a value type"))
         }
@@ -1503,56 +1525,42 @@ trait BsonDocumentHandlerMacrosImpl
         case IsValueType(isValueType) if !Type[Field].isNamedTuple =>
           import isValueType.Underlying as Inner
           val innerCtx = fieldCtx.copy(tpe = Type[Inner])
-          val wrapLambdaMIO = isValueType.value.wrap match {
-            case _: CtorLikeOf.PlainValue[?, ?] =>
-              LambdaBuilder
-                .of1[Inner]("inner")
-                .traverse(innerExpr => MIO.pure(isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Field]]))
-                .map(_.build[Field])
-            case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
-              LambdaBuilder
-                .of1[Inner]("inner")
-                .traverse { innerExpr =>
-                  val wrapResult = isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Either[String, Field]]]
-                  MIO.pure(Expr.quote {
-                    Expr.splice(wrapResult) match {
-                      case scala.Right(v)  => v
-                      case scala.Left(msg) => throw new IllegalArgumentException(msg)
-                    }
-                  })
-                }
-                .map(_.build[Field])
-            case _ =>
-              LambdaBuilder
-                .of1[Inner]("inner")
-                .traverse(innerExpr => MIO.pure(isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Field]]))
-                .map(_.build[Field])
-          }
-          wrapLambdaMIO.flatMap { wrapLambda =>
-            resolveFieldReader[Inner](innerCtx).map { readerExpr =>
-              val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
-              val readCode = Expr.quote {
-                Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
-                  case Some(v) if !v.isInstanceOf[reactivemongo.api.bson.BSONNull] =>
-                    Expr
-                      .splice(readerExpr)
-                      .readTry(v)
-                      .map(Expr.splice(wrapLambda).apply(_))
-                      .asInstanceOf[scala.util.Try[Any]]
-                  case _ =>
-                    scala.util.Failure(new NoSuchElementException("Field not found")).asInstanceOf[scala.util.Try[Any]]
-                }
-              }
-              defaultExprOpt match {
-                case Some(defaultExpr) =>
-                  Expr.quote {
-                    Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
-                      case None => scala.util.Success(Expr.splice(defaultExpr)).asInstanceOf[scala.util.Try[Any]]
-                      case _    => Expr.splice(readCode)
-                    }
+          val wrapLambda = directLambda[Inner, Field] { innerExpr =>
+            isValueType.value.wrap match {
+              case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
+                val wrapped = isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Either[String, Field]]]
+                Expr.quote {
+                  Expr.splice(wrapped) match {
+                    case scala.Right(value)  => value
+                    case scala.Left(message) => throw new IllegalArgumentException(message)
                   }
-                case None => readCode
+                }
+              case _ => isValueType.value.wrap.apply(innerExpr).asInstanceOf[Expr[Field]]
+            }
+          }
+          resolveFieldReader[Inner](innerCtx).map { readerExpr =>
+            val defaultExprOpt: Option[Expr[Field]] = computeDefaultExpr[Field](param)
+            val readCode = Expr.quote {
+              Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
+                case Some(v) if !v.isInstanceOf[reactivemongo.api.bson.BSONNull] =>
+                  Expr
+                    .splice(readerExpr)
+                    .readTry(v)
+                    .map(Expr.splice(wrapLambda).apply(_))
+                    .asInstanceOf[scala.util.Try[Any]]
+                case _ =>
+                  scala.util.Failure(new NoSuchElementException("Field not found")).asInstanceOf[scala.util.Try[Any]]
               }
+            }
+            defaultExprOpt match {
+              case Some(defaultExpr) =>
+                Expr.quote {
+                  Expr.splice(docExpr).get(Expr.splice(fNameExpr)) match {
+                    case None => scala.util.Success(Expr.splice(defaultExpr)).asInstanceOf[scala.util.Try[Any]]
+                    case _    => Expr.splice(readCode)
+                  }
+                }
+              case None => readCode
             }
           }
         case _ =>
@@ -1700,19 +1708,14 @@ trait BsonDocumentHandlerMacrosImpl
         case IsValueType(isValueType) if !Type[Field].isNamedTuple =>
           import isValueType.Underlying as Inner
           val innerCtx = fieldCtx.copy(tpe = Type[Inner])
-          LambdaBuilder
-            .of1[Field]("value")
-            .traverse(valueExpr => MIO.pure(isValueType.value.unwrap(valueExpr)))
-            .map(_.build[Inner])
-            .flatMap { unwrapLambda =>
-              resolveFieldWriter[Inner](innerCtx).map { writerExpr =>
-                Expr.quote {
-                  Expr.splice(writerExpr).writeTry(Expr.splice(unwrapLambda).apply(Expr.splice(fieldValue))).map { bsv =>
-                    List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
-                  }
-                }
+          val unwrapLambda = directLambda[Field, Inner](isValueType.value.unwrap)
+          resolveFieldWriter[Inner](innerCtx).map { writerExpr =>
+            Expr.quote {
+              Expr.splice(writerExpr).writeTry(Expr.splice(unwrapLambda).apply(Expr.splice(fieldValue))).map { bsv =>
+                List(Some(reactivemongo.api.bson.BSONElement(Expr.splice(fNameExpr), bsv)))
               }
             }
+          }
         case _ =>
           resolveFieldWriter[Field](fieldCtx).map { writerExpr =>
             Expr.quote {
@@ -2006,13 +2009,12 @@ trait BsonDocumentHandlerMacrosImpl
                           case None =>
                             deriveResultRecursively[ChildType](using ctx.nest[ChildType]).map { childHandler =>
                               Expr.quote {
-                                val childDoc = Expr.splice(childHandler).writeTry(Expr.splice(enumCaseValue)).get
-                                scala.util.Success(
+                                Expr.splice(childHandler).writeTry(Expr.splice(enumCaseValue)).map { childDoc =>
                                   childDoc ++
                                     BSONDocument(
                                       Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
                                     )
-                                )
+                                }
                               }
                             }
                         }
@@ -2064,7 +2066,10 @@ trait BsonDocumentHandlerMacrosImpl
               Expr.quote {
                 Expr.splice(docExpr).get(Expr.splice(discriminatorFieldExpr)) match {
                   case Some(bsv) if bsv == reactivemongo.api.bson.BSONString(Expr.splice(discriminatorNameExpr)) =>
-                    Expr.splice(childHandler).readDocument(Expr.splice(docExpr)).map(_.asInstanceOf[A])
+                    Expr
+                      .splice(childHandler)
+                      .readDocument(Expr.splice(docExpr) -- Expr.splice(discriminatorFieldExpr))
+                      .map(_.asInstanceOf[A])
                   case _ => Expr.splice(elseExpr)
                 }
               }

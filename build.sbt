@@ -211,7 +211,7 @@ lazy val aliases = new Aliases(
     tapirOpenapiJsoniter,
     optics
   ),
-  testOnly = Seq(integrationTests, derivationPolicyTests),
+  testOnly = Seq(integrationTests, derivationPolicyTests, reactivemongoBsonDerivationPolicyTests),
   compileOnly = Seq(benchmarks)
 )
 
@@ -232,6 +232,22 @@ lazy val reactivemongoBsonDerivation = projectMatrix
       "org.reactivemongo" %% "reactivemongo-bson-api" % "1.1.0-RC21.SNAPSHOT"
     ),
     resolvers += Resolver.mavenLocal
+  )
+
+lazy val reactivemongoBsonDerivationPolicyTests = projectMatrix
+  .in(file("reactivemongo-bson-derivation-policy-tests"))
+  .someVariations(versions.scalas, List(VirtualAxis.jvm))((useCrossQuotes ++ dev.only1VersionInIDE) *)
+  .dependsOn(reactivemongoBsonDerivation)
+  .settings(noPublishSettings *)
+  .settings(settings *)
+  .settings(dependencies *)
+  .settings(
+    moduleName := "kindlings-reactivemongo-bson-derivation-policy-tests",
+    Test / scalacOptions ++= Seq(
+      "-Xmacro-settings:reactivemongoBsonDerivation.policy.enabled=opt-in",
+      "-Xmacro-settings:reactivemongoBsonDerivation.policy.allowedScopes=hearth.kindlings.reactivemongobsonpolicytest.allowed",
+      "-Xmacro-settings:reactivemongoBsonDerivation.policy.optInByImport=true"
+    )
   )
 
 // On sbt 2.0 sbt-welcome is gone, so the `ci-*` / `test-*` command aliases it used to register
@@ -292,6 +308,7 @@ lazy val root = project
   .aggregate(scalacheckDerivation.projectRefs *)
   .aggregate(catsIntegration.projectRefs *)
   .aggregate(reactivemongoBsonDerivation.projectRefs *)
+  .aggregate(reactivemongoBsonDerivationPolicyTests.projectRefs *)
   .aggregate(diffDerivation.projectRefs *)
   .aggregate(di.projectRefs *)
   .aggregate(diCats.projectRefs *)

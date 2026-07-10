@@ -77,7 +77,6 @@ implicit val config: BsonDocumentHandlerConfig =
 | `withFieldNaming(FieldNaming.SnakeCase)` | Use a structured field-name strategy |
 | `withSnakeCaseFieldNames`, `withKebabCaseFieldNames`, `withPascalCaseFieldNames` | Common field-name mappings |
 | `withDiscriminatorFieldName(name)` | Set the sealed-ADT discriminator field |
-| `withoutDiscriminator` | Use wrapper-style sealed-ADT encoding |
 | `withTypeNaming(TypeNaming.SimpleName)` | Use short subtype names instead of the default fully-qualified names |
 | `withSkipUnexpectedFields(false)` | Fail decoding when the document contains unknown fields |
 
@@ -207,6 +206,22 @@ Check existing BSON round-trip tests when migrating, especially for custom field
 - A flattened field's BSON key collisions are not detected at compile time.
 - Regular non-case classes require a manual `BSONDocumentHandler`.
 
+## Derivation policy
+
+Structural derivation is allowed by default. Builds that use the shared derivation policy can require an explicit opt-in:
+
+```text
+-Xmacro-settings:reactivemongoBsonDerivation.policy.enabled=opt-in
+```
+
+Then import the marker where derivation is intended:
+
+```scala
+import hearth.kindlings.reactivemongobsonderivation.policy.allowDerivationForReactiveMongoBson
+```
+
+See the [derivation policy guide](derivation-policy.md) for allowed scopes and the complete setting reference.
+
 ## Debugging and timeout
 
 Import the debug package to log derivation decisions:
@@ -218,5 +233,5 @@ import hearth.kindlings.reactivemongobsonderivation.debug._
 The default derivation timeout is five seconds. Increase it for a large hierarchy with a compiler option:
 
 ```text
--Xmacro-settings:bsonDocumentHandler.timeout=60s
+-Xmacro-settings:reactivemongoBsonDerivation.timeout=60s
 ```
