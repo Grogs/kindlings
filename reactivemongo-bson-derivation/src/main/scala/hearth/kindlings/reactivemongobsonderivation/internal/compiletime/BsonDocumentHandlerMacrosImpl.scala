@@ -423,45 +423,35 @@ trait BsonDocumentHandlerMacrosImpl
     resolveBsonReader[Item](fieldCtx.nest[Item]).flatMap { itemReaderExpr =>
       buildStep match {
         case _: CtorLikeOf.PlainValue[?, ?] =>
-          LambdaBuilder
-            .of1[reactivemongo.api.bson.BSONArray]("arr")
-            .traverse { arrExpr =>
-              import isCollection.CtorResult
-              val readLoop: Expr[scala.collection.mutable.Builder[Item, CtorResult]] = Expr.quote {
-                val itemReader = Expr.splice(itemReaderExpr)
-                val collBuilder = Expr.splice(factoryExpr).newBuilder
-                val values = Expr.splice(arrExpr).values
-                var i = 0
-                while (i < values.length) {
-                  collBuilder += itemReader.readTry(values(i)).get
-                  i += 1
-                }
-                collBuilder
+          import isCollection.CtorResult
+          val readFnExpr = directLambda[reactivemongo.api.bson.BSONArray, scala.util.Try[A]] { arrExpr =>
+            val readLoop: Expr[scala.collection.mutable.Builder[Item, CtorResult]] = Expr.quote {
+              val itemReader = Expr.splice(itemReaderExpr)
+              val collBuilder = Expr.splice(factoryExpr).newBuilder
+              val values = Expr.splice(arrExpr).values
+              var i = 0
+              while (i < values.length) {
+                collBuilder += itemReader.readTry(values(i)).get
+                i += 1
               }
-              val buildResultExpr = buildStep.ctor(readLoop)
-              // PlainValue guarantees CtorResult = A, so the result is Expr[A]
-              MIO.pure(Expr.quote {
-                scala.util.Try(Expr.splice(buildResultExpr.asInstanceOf[Expr[A]]))
-              })
+              collBuilder
             }
-            .map(_.build[scala.util.Try[A]])
-            .map { readFnExpr =>
-              Expr.quote {
-                new reactivemongo.api.bson.BSONReader[A] {
-                  def readTry(bson: reactivemongo.api.bson.BSONValue): scala.util.Try[A] =
-                    bson match {
-                      case arr: reactivemongo.api.bson.BSONArray =>
-                        Expr.splice(readFnExpr).apply(arr)
-                      case _ =>
-                        scala.util.Failure(
-                          new IllegalArgumentException(
-                            s"Expected BSONArray for collection, got ${bson.getClass.getSimpleName}"
-                          )
-                        )
-                    }
-                }
+            val buildResultExpr = buildStep.ctor(readLoop)
+            Expr.quote(scala.util.Try(Expr.splice(buildResultExpr.asInstanceOf[Expr[A]])))
+          }
+          MIO.pure(Expr.quote {
+            new reactivemongo.api.bson.BSONReader[A] {
+              def readTry(bson: reactivemongo.api.bson.BSONValue): scala.util.Try[A] = bson match {
+                case arr: reactivemongo.api.bson.BSONArray => Expr.splice(readFnExpr).apply(arr)
+                case _                                     =>
+                  scala.util.Failure(
+                    new IllegalArgumentException(
+                      s"Expected BSONArray for collection, got ${bson.getClass.getSimpleName}"
+                    )
+                  )
               }
             }
+          })
         case _ =>
           val err = BsonDocumentHandlerDerivationError.CannotDeriveField(
             Type[A].prettyPrint,
@@ -592,32 +582,26 @@ trait BsonDocumentHandlerMacrosImpl
     @scala.annotation.nowarn("msg=is never used")
     implicit val TryBsonValueT: Type[scala.util.Try[reactivemongo.api.bson.BSONValue]] =
       Types.TryCtor[reactivemongo.api.bson.BSONValue]
-    resolveBsonWriter[Item](fieldCtx.nest[Item]).flatMap { itemWriterExpr =>
-      LambdaBuilder
-        .of1[A]("value")
-        .traverse { valueExpr =>
-          MIO.pure(Expr.quote {
-            val iterable = Expr.splice(isCollection.asIterable(valueExpr)).asInstanceOf[Iterable[Item]]
-            val items = iterable.iterator
-            val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONValue]
-            var err: Throwable = null
-            while (err == null && items.hasNext)
-              try builder += Expr.splice(itemWriterExpr).writeTry(items.next()).get
-              catch { case e: Exception => err = e }
-            if (err != null) scala.util.Failure(err)
-            else
-              scala.util.Success(reactivemongo.api.bson.BSONArray(builder.result()): reactivemongo.api.bson.BSONValue)
-          })
+    resolveBsonWriter[Item](fieldCtx.nest[Item]).map { itemWriterExpr =>
+      val writeFnExpr = directLambda[A, scala.util.Try[reactivemongo.api.bson.BSONValue]] { valueExpr =>
+        Expr.quote {
+          val iterable = Expr.splice(isCollection.asIterable(valueExpr)).asInstanceOf[Iterable[Item]]
+          val items = iterable.iterator
+          val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONValue]
+          var err: Throwable = null
+          while (err == null && items.hasNext)
+            try builder += Expr.splice(itemWriterExpr).writeTry(items.next()).get
+            catch { case e: Exception => err = e }
+          if (err != null) scala.util.Failure(err)
+          else scala.util.Success(reactivemongo.api.bson.BSONArray(builder.result()): reactivemongo.api.bson.BSONValue)
         }
-        .map(_.build[scala.util.Try[reactivemongo.api.bson.BSONValue]])
-        .map { writeFnExpr =>
-          Expr.quote {
-            new reactivemongo.api.bson.BSONWriter[A] {
-              def writeTry(value: A): scala.util.Try[reactivemongo.api.bson.BSONValue] =
-                Expr.splice(writeFnExpr).apply(value)
-            }
-          }
+      }
+      Expr.quote {
+        new reactivemongo.api.bson.BSONWriter[A] {
+          def writeTry(value: A): scala.util.Try[reactivemongo.api.bson.BSONValue] =
+            Expr.splice(writeFnExpr).apply(value)
         }
+      }
     }
   }
 
@@ -630,29 +614,32 @@ trait BsonDocumentHandlerMacrosImpl
     @scala.annotation.nowarn("msg=is never used")
     implicit val TryBsonValueT: Type[scala.util.Try[reactivemongo.api.bson.BSONValue]] =
       Types.TryCtor[reactivemongo.api.bson.BSONValue]
-    resolveBsonWriter[Pair](fieldCtx.nest[Pair]).flatMap { pairWriterExpr =>
-      LambdaBuilder
-        .of1[A]("value")
-        .traverse { valueExpr =>
-          MIO.pure(Expr.quote {
-            val pairs = Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(String, Pair)]]
-            val iter = pairs.iterator
-            val elements = scala.collection.mutable.ListBuffer.empty[(String, reactivemongo.api.bson.BSONValue)]
-            var err: Throwable = null
-            while (err == null && iter.hasNext) {
-              val (key, value) = iter.next()
-              try elements += (key -> Expr.splice(pairWriterExpr).writeTry(value).get)
-              catch { case e: Exception => err = e }
+    import isMap.{Key, Value}
+    implicit val KeyWriterT: Type[reactivemongo.api.bson.KeyWriter[Key]] = Types.KeyWriter[Key]
+    Type[reactivemongo.api.bson.KeyWriter[Key]].summonExprIgnoring(Types.ignoredAutoDerivationMethods*).toEither match {
+      case Left(reason) => MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[Key].prettyPrint, reason))
+      case Right(keyWriterExpr) =>
+        resolveBsonWriter[Value](fieldCtx.nest[Value]).map { valueWriterExpr =>
+          val writeFnExpr = directLambda[A, scala.util.Try[reactivemongo.api.bson.BSONValue]] { valueExpr =>
+            Expr.quote {
+              val pairs = Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
+              val iter = pairs.iterator
+              val elements = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONElement]
+              var err: Throwable = null
+              while (err == null && iter.hasNext) {
+                val (key, value) = iter.next()
+                try {
+                  val name = Expr.splice(keyWriterExpr).writeTry(key).get
+                  elements += reactivemongo.api.bson.BSONElement(name, Expr.splice(valueWriterExpr).writeTry(value).get)
+                } catch { case e: Exception => err = e }
+              }
+              if (err != null) scala.util.Failure(err)
+              else
+                scala.util.Success(
+                  reactivemongo.api.bson.BSONDocument(elements.result()*): reactivemongo.api.bson.BSONValue
+                )
             }
-            if (err != null) scala.util.Failure(err)
-            else
-              scala.util.Success(
-                reactivemongo.api.bson.BSONDocument(elements.result()): reactivemongo.api.bson.BSONValue
-              )
-          })
-        }
-        .map(_.build[scala.util.Try[reactivemongo.api.bson.BSONValue]])
-        .map { writeFnExpr =>
+          }
           Expr.quote {
             new reactivemongo.api.bson.BSONWriter[A] {
               def writeTry(value: A): scala.util.Try[reactivemongo.api.bson.BSONValue] =

@@ -35,6 +35,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       )
     }
 
+    test("inline write handles nested maps") {
+      case class MapHolder(values: Map[String, Int])
+      assertEquals(
+        KindlingsBsonDocumentHandler.write(MapHolder(Map("one" -> 1, "two" -> 2))).get,
+        BSONDocument("values" -> BSONDocument("one" -> 1, "two" -> 2))
+      )
+    }
+
     test("inline write handles sealed traits") {
       assertEquals(
         KindlingsBsonDocumentHandler.write[SimpleEnum](Foo).get,
