@@ -997,8 +997,19 @@ trait BsonDocumentHandlerMacrosImpl
                 }
               }
               val unwrapLambda = directLambda[A, Inner](isValueType.value.unwrap)
-              // Try to summon BSONReader/BSONWriter for the inner type first
-              val readerWriterMIO = {
+              // A write-only expansion never evaluates the read body. In particular, do not derive an inner
+              // handler merely to obtain a reader when only its writer is required.
+              val readerWriterMIO = if (ctx.writeOnly) {
+                resolveBsonWriter[Inner](ctx.nest[Inner]).map { writer =>
+                  val unusedReader: Expr[reactivemongo.api.bson.BSONReader[Inner]] = Expr.quote {
+                    new reactivemongo.api.bson.BSONReader[Inner] {
+                      def readTry(bson: reactivemongo.api.bson.BSONValue): Try[Inner] =
+                        scala.util.Failure(new UnsupportedOperationException("read body omitted"))
+                    }
+                  }
+                  (unusedReader, writer)
+                }
+              } else {
                 implicit val readerType: Type[reactivemongo.api.bson.BSONReader[Inner]] =
                   Types.BsonReader[Inner]
                 implicit val writerType: Type[reactivemongo.api.bson.BSONWriter[Inner]] =
