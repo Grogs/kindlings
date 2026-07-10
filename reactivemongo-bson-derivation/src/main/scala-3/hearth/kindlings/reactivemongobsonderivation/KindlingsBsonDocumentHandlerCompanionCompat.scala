@@ -6,4 +6,9 @@ private[reactivemongobsonderivation] trait KindlingsBsonDocumentHandlerCompanion
   inline given derived[A](using config: BsonDocumentHandlerConfig): KindlingsBsonDocumentHandler[A] = ${
     internal.compiletime.BsonDocumentHandlerMacros.deriveTypeClassImpl[A]('config)
   }
+
+  inline def write[A](inline value: A)(using
+      config: BsonDocumentHandlerConfig
+  ): scala.util.Try[reactivemongo.api.bson.BSONDocument] =
+    ${ internal.compiletime.BsonDocumentHandlerMacros.deriveInlineImpl[A]('value, 'config) }
 }

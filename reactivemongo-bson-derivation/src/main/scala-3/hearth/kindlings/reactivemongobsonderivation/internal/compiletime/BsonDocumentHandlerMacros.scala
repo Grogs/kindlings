@@ -20,6 +20,14 @@ final private[reactivemongobsonderivation] class BsonDocumentHandlerMacros(q: Qu
 
 private[reactivemongobsonderivation] object BsonDocumentHandlerMacros {
 
+  def deriveInlineImpl[A: Type](using
+      q: Quotes
+  )(
+      valueExpr: Expr[A],
+      configExpr: Expr[hearth.kindlings.reactivemongobsonderivation.BsonDocumentHandlerConfig]
+  ): Expr[scala.util.Try[reactivemongo.api.bson.BSONDocument]] =
+    new BsonDocumentHandlerMacros(q).deriveInline[A](valueExpr, configExpr)
+
   def deriveTypeClassImpl[A: Type](using
       q: Quotes
   )(

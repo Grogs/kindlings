@@ -7,4 +7,9 @@ private[reactivemongobsonderivation] trait KindlingsBsonDocumentHandlerCompanion
 
   implicit def derived[A](implicit config: BsonDocumentHandlerConfig): KindlingsBsonDocumentHandler[A] =
     macro internal.compiletime.BsonDocumentHandlerMacros.deriveTypeClassImpl[A]
+
+  def write[A](value: A)(implicit
+      config: BsonDocumentHandlerConfig
+  ): scala.util.Try[reactivemongo.api.bson.BSONDocument] =
+    macro internal.compiletime.BsonDocumentHandlerMacros.deriveInlineImpl[A]
 }

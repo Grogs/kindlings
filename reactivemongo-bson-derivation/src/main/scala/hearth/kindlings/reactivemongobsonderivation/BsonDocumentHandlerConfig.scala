@@ -44,9 +44,6 @@ final case class BsonDocumentHandlerConfig(
   def withDiscriminatorFieldName(name: String): BsonDocumentHandlerConfig =
     copy(discriminatorFieldName = Some(name))
 
-  def withoutDiscriminator: BsonDocumentHandlerConfig =
-    copy(discriminatorFieldName = None)
-
   def withSkipUnexpectedFields(skip: Boolean): BsonDocumentHandlerConfig =
     copy(skipUnexpectedFields = skip)
 }
