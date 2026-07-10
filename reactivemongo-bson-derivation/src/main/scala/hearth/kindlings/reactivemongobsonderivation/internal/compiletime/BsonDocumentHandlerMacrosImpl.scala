@@ -512,6 +512,8 @@ trait BsonDocumentHandlerMacrosImpl
   def resolveBsonWriter[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
     ensureMapKeyCodecs[A]()
     implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+    implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryBsonDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
     @scala.annotation.nowarn("msg=is never used")
     implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
     @scala.annotation.nowarn("msg=is never used")
@@ -542,6 +544,23 @@ trait BsonDocumentHandlerMacrosImpl
           case IsMap(isMap) =>
             import isMap.Underlying as Pair
             deriveInlineMapWriter[A, Pair](isMap.value, fieldCtx)
+          case _ if isCaseClassOrEnum[A] && fieldCtx.writeOnly =>
+            // Inline writing must recurse through cached write defs, not through a derived handler instance.
+            fieldCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-write-body").flatMap {
+              case Some(writeCall) => MIO.pure(writerFromDocumentWrite[A](writeCall))
+              case None            =>
+                deriveResultRecursivelyViaRules[A](using fieldCtx) >>
+                  fieldCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-write-body").flatMap {
+                    case Some(writeCall) => MIO.pure(writerFromDocumentWrite[A](writeCall))
+                    case None            =>
+                      MIO.fail(
+                        BsonDocumentHandlerDerivationError.CannotDeriveField(
+                          Type[A].prettyPrint,
+                          "No cached BSON document writer found"
+                        )
+                      )
+                  }
+            }
           case _ if isCaseClassOrEnum[A] =>
             deriveResultRecursively[A](using fieldCtx)
               .map(_.asInstanceOf[Expr[reactivemongo.api.bson.BSONWriter[A]]])
@@ -552,6 +571,17 @@ trait BsonDocumentHandlerMacrosImpl
         }
     }
   }
+
+  /** Adapt a cached document-write def to ReactiveMongo's BSONWriter for nested structural fields. */
+  private def writerFromDocumentWrite[A: Type](
+      writeCall: Expr[A] => Expr[Try[BSONDocument]]
+  ): Expr[reactivemongo.api.bson.BSONWriter[A]] =
+    Expr.quote {
+      new reactivemongo.api.bson.BSONWriter[A] {
+        def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] =
+          Expr.splice(writeCall(Expr.quote(value))).map(document => document: reactivemongo.api.bson.BSONValue)
+      }
+    }
 
   private def deriveInlineCollectionWriter[A: Type, Item: Type](
       isCollection: IsCollectionOf[A, Item],
