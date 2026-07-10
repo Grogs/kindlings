@@ -988,21 +988,27 @@ trait BsonDocumentHandlerMacrosImpl
                     }
                 }
               }
-              readerWriterMIO.map { case (innerReaderExpr, innerWriterExpr) =>
-                Rule.matched(Expr.quote {
+              readerWriterMIO.flatMap { case (innerReaderExpr, innerWriterExpr) =>
+                for {
+                  readBody <- ctx.cacheReadBody[A] { doc =>
+                    MIO.pure(Expr.quote {
+                      Expr
+                        .splice(innerReaderExpr)
+                        .readTry(Expr.splice(doc).get("value").getOrElse(reactivemongo.api.bson.BSONNull))
+                        .map(innerValue => Expr.splice(wrapLambda).apply(innerValue))
+                    })
+                  }
+                  writeBody <- ctx.cacheWriteBody[A] { value =>
+                    MIO.pure(Expr.quote {
+                      Expr
+                        .splice(innerWriterExpr)
+                        .writeTry(Expr.splice(unwrapLambda)(Expr.splice(value)))
+                        .map(bsonValue => BSONDocument("value" -> bsonValue))
+                    })
+                  }
+                } yield Rule.matched(Expr.quote {
                   hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                    .handlerInstance[A](
-                      (doc: BSONDocument) =>
-                        Expr
-                          .splice(innerReaderExpr)
-                          .readTry(doc.get("value").getOrElse(reactivemongo.api.bson.BSONNull))
-                          .map(innerValue => Expr.splice(wrapLambda).apply(innerValue)),
-                      (value: A) =>
-                        Expr
-                          .splice(innerWriterExpr)
-                          .writeTry(Expr.splice(unwrapLambda)(value))
-                          .map(bsonValue => BSONDocument("value" -> bsonValue))
-                    )
+                    .handlerInstance[A](readFn = Expr.splice(readBody), writeFn = Expr.splice(writeBody))
                 })
               }
             }
@@ -1330,37 +1336,30 @@ trait BsonDocumentHandlerMacrosImpl
           case IsOption(isOption) =>
             import isOption.Underlying as Inner
             val innerCtx = ctx.nest[Inner]
-            deriveResultRecursively[Inner](using innerCtx).flatMap { innerHandlerExpr =>
-              val handlerExpr = Expr.quote {
-                hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                  .handlerInstance[A](
-                    (doc: BSONDocument) =>
-                      doc.get("value") match {
-                        case None | Some(reactivemongo.api.bson.BSONNull) =>
-                          scala.util.Success(None.asInstanceOf[A])
-                        case Some(v) =>
-                          Expr
-                            .splice(innerHandlerExpr)
-                            .asInstanceOf[reactivemongo.api.bson.BSONReader[Inner]]
-                            .readTry(v)
-                            .map(_.asInstanceOf[A])
-                      },
-                    (value: A) =>
-                      value match {
-                        case Some(v) =>
-                          Expr
-                            .splice(innerHandlerExpr)
-                            .asInstanceOf[reactivemongo.api.bson.BSONWriter[Inner]]
-                            .writeTry(v.asInstanceOf[Inner])
-                            .map { bsv =>
-                              BSONDocument("value" -> bsv)
-                            }
-                        case None => scala.util.Success(BSONDocument.empty)
-                      }
-                  )
+            for {
+              innerReader <- resolveBsonReader[Inner](innerCtx)
+              innerWriter <- resolveBsonWriter[Inner](innerCtx)
+              readBody <- ctx.cacheReadBody[A] { doc =>
+                MIO.pure(Expr.quote {
+                  Expr.splice(doc).get("value") match {
+                    case None | Some(reactivemongo.api.bson.BSONNull) => scala.util.Success(None.asInstanceOf[A])
+                    case Some(v) => Expr.splice(innerReader).readTry(v).map(_.asInstanceOf[A])
+                  }
+                })
               }
-              MIO.pure(Rule.matched(handlerExpr))
-            }
+              writeBody <- ctx.cacheWriteBody[A] { value =>
+                MIO.pure(Expr.quote {
+                  Expr.splice(value) match {
+                    case Some(v) =>
+                      Expr.splice(innerWriter).writeTry(v.asInstanceOf[Inner]).map(bsv => BSONDocument("value" -> bsv))
+                    case None => scala.util.Success(BSONDocument.empty)
+                  }
+                })
+              }
+            } yield Rule.matched(Expr.quote {
+              hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                .handlerInstance[A](readFn = Expr.splice(readBody), writeFn = Expr.splice(writeBody))
+            })
           case _ => MIO.pure(Rule.yielded(s"${Type[A].prettyPrint} is not an Option"))
         }
       }
@@ -1901,13 +1900,17 @@ trait BsonDocumentHandlerMacrosImpl
       if (fieldsList.isEmpty) {
         constructEmpty().flatMap {
           case Some(constructExpr) =>
-            MIO.pure(Expr.quote {
+            for {
+              readBody <- ctx.cacheReadBody[A] { _ =>
+                MIO.pure(Expr.quote(scala.util.Success(Expr.splice(constructExpr)): Try[A]))
+              }
+              writeBody <- ctx.cacheWriteBody[A] { _ =>
+                MIO.pure(Expr.quote(scala.util.Success(BSONDocument.empty): Try[BSONDocument]))
+              }
+            } yield Expr.quote {
               hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                .handlerInstance[A](
-                  readFn = { _ => scala.util.Success(Expr.splice(constructExpr)) },
-                  writeFn = { _ => scala.util.Success(BSONDocument.empty) }
-                )
-            })
+                .handlerInstance[A](readFn = Expr.splice(readBody), writeFn = Expr.splice(writeBody))
+            }
           case None =>
             val err = BsonDocumentHandlerDerivationError.CannotConstructType(Type[A].prettyPrint, None)
             Log.error(err.message) >> MIO.fail(err)
