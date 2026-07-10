@@ -789,6 +789,7 @@ trait BsonDocumentHandlerMacrosImpl
         HandleAsValueTypeRule,
         HandleAsCollectionRule,
         HandleAsOptionRule,
+        HandleAsNamedTupleRule,
         HandleAsCaseClassRule,
         HandleAsEnumRule
       )(_[A]).flatMap {
@@ -1289,6 +1290,16 @@ trait BsonDocumentHandlerMacrosImpl
     else if (Type[A] =:= Type.of[Char]) Expr.quote(' '.asInstanceOf[A])
     else Expr.quote(null.asInstanceOf[A])
 
+  object HandleAsNamedTupleRule extends DerivationRule("handle as named tuple") {
+    def apply[A: DerivationCtx]: MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] =
+      Log.info(s"Attempting to handle ${Type[A].prettyPrint} as a named tuple") >> {
+        NamedTuple.parse[A].toEither match {
+          case Right(namedTuple) => HandleAsCaseClassRule.deriveNamedTuple[A](namedTuple).map(Rule.matched)
+          case Left(reason)      => MIO.pure(Rule.yielded(reason))
+        }
+      }
+  }
+
   object HandleAsCaseClassRule extends DerivationRule("handle as case class") {
     def apply[A: DerivationCtx]: MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] =
       Log.info(s"Attempting to handle ${Type[A].prettyPrint} as a case class") >> {
@@ -1739,36 +1750,74 @@ trait BsonDocumentHandlerMacrosImpl
 
     private def deriveCaseClass[A: DerivationCtx](
         caseClass: CaseClass[A]
-    ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
-      implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
-      implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
-      implicit val TryBsonDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
-
-      val constructor = caseClass.primaryConstructor
-      val fieldsList = constructor.parameters.flatten.toList
-
-      if (fieldsList.isEmpty) {
-        caseClass
-          .construct[MIO](new CaseClass.ConstructField[MIO] {
+    ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] =
+      deriveRecord[A](
+        caseClass.primaryConstructor,
+        value => caseClass.caseFieldValuesAt(value).toList,
+        () =>
+          caseClass.construct[MIO](new CaseClass.ConstructField[MIO] {
             def apply(field: Parameter): MIO[Expr[field.tpe.Underlying]] = {
               val err = BsonDocumentHandlerDerivationError
                 .CannotConstructType(Type[A].prettyPrint, Some("Unexpected parameter"))
               Log.error(err.message) >> MIO.fail(err)
             }
           })
-          .flatMap {
-            case Some(constructExpr) =>
-              MIO.pure(Expr.quote {
-                hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                  .handlerInstance[A](
-                    readFn = { _ => scala.util.Success(Expr.splice(constructExpr)) },
-                    writeFn = { _ => scala.util.Success(BSONDocument.empty) }
-                  )
-              })
-            case None =>
-              val err = BsonDocumentHandlerDerivationError.CannotConstructType(Type[A].prettyPrint, None)
-              Log.error(err.message) >> MIO.fail(err)
+      )
+
+    /** Named tuples have record constructors but no case-class accessors. Their values are Products, so use the
+      * constructor parameter index to read each element. Keeping this on the common record path also ensures their
+      * decoding follows the same field-name, default, and unexpected-field semantics as case classes.
+      */
+    def deriveNamedTuple[A: DerivationCtx](namedTuple: NamedTuple[A]): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
+      val constructor = namedTuple.primaryConstructor
+      deriveRecord[A](
+        constructor,
+        value =>
+          constructor.parameters.flatten.toList.map { case (name, parameter) =>
+            import parameter.tpe.Underlying as Field
+            val index = Expr(parameter.index)
+            name -> Expr.quote {
+              Expr.splice(value).asInstanceOf[Product].productElement(Expr.splice(index)).asInstanceOf[Field]
+            }.as_??
+          },
+        () => {
+          val construct = foldInstanceFree(constructor, "Constructor")(
+            onTypes = _ => Map.empty,
+            onValues = _ => Map.empty
+          ) match {
+            case Right(expr) => Some(expr.value.asInstanceOf[Expr[A]])
+            case Left(_)     => None
           }
+          MIO.pure(construct)
+        }
+      )
+    }
+
+    private def deriveRecord[A: DerivationCtx](
+        constructor: Method,
+        fieldValuesAt: Expr[A] => List[(String, Expr_??)],
+        constructEmpty: () => MIO[Option[Expr[A]]]
+    ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
+      implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+      implicit val TryBsonDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+
+      val fieldsList = constructor.parameters.flatten.toList
+
+      if (fieldsList.isEmpty) {
+        constructEmpty().flatMap {
+          case Some(constructExpr) =>
+            MIO.pure(Expr.quote {
+              hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                .handlerInstance[A](
+                  readFn = { _ => scala.util.Success(Expr.splice(constructExpr)) },
+                  writeFn = { _ => scala.util.Success(BSONDocument.empty) }
+                )
+            })
+          case None =>
+            val err = BsonDocumentHandlerDerivationError.CannotConstructType(Type[A].prettyPrint, None)
+            Log.error(err.message) >> MIO.fail(err)
+        }
       } else {
         val fieldsNel = NonEmptyList(fieldsList.head, fieldsList.tail)
         for {
@@ -1816,7 +1865,7 @@ trait BsonDocumentHandlerMacrosImpl
                       (name, getter)
                     }
                     .toMap
-                  val constructExpr: Expr[A] = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                  val constructExpr: Expr[A] = foldInstanceFree(constructor, "Constructor")(
                     onTypes = _ => Map.empty,
                     onValues = _ => fieldMap
                   ) match {
@@ -1850,7 +1899,7 @@ trait BsonDocumentHandlerMacrosImpl
           writeLambda <- LambdaBuilder
             .of1[A]("value")
             .traverse { valueExpr =>
-              val fieldValues = caseClass.caseFieldValuesAt(valueExpr).toList
+              val fieldValues = fieldValuesAt(valueExpr)
               val fieldValuesNel = NonEmptyList(fieldValues.head, fieldValues.tail)
               fieldValuesNel
                 .parTraverse { case (fName, fieldValue) =>

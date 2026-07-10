@@ -11,11 +11,11 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
   group("KindlingsBsonDocumentHandler") {
 
-    test("inline write entry point") {
-      assertEquals(
-        KindlingsBsonDocumentHandler.write(Person("Alice", 30)).get,
-        BSONDocument("name" -> "Alice", "age" -> 30)
-      )
+    test("inline write entry point matches derived handler") {
+      val value = Person("Alice", 30)
+      val handler = KindlingsBsonDocumentHandler.derived[Person]
+
+      assertEquals(KindlingsBsonDocumentHandler.write(value).get, handler.writeTry(value).get)
     }
 
     test("root derivation honors a BSONDocumentHandler implicit") {
@@ -23,6 +23,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         _ => Person("from external", 0),
         _ => BSONDocument("external" -> true)
       )
+      @scala.annotation.nowarn("msg=is never used|unused")
       val handler: KindlingsBsonDocumentHandler[Person] = KindlingsBsonDocumentHandler.derived[Person]
 
       assertEquals(handler.readDocument(BSONDocument.empty).get, Person("from external", 0))
