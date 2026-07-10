@@ -15,7 +15,8 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       val value = Person("Alice", 30)
       val handler = KindlingsBsonDocumentHandler.derived[Person]
 
-      assertEquals(KindlingsBsonDocumentHandler.write(value).get, handler.writeTry(value).get)
+      val inlineDocument = KindlingsBsonDocumentHandler.write(value).get
+      assertEquals(inlineDocument, handler.writeTry(value).get)
     }
 
     test("root derivation honors a BSONDocumentHandler implicit") {
