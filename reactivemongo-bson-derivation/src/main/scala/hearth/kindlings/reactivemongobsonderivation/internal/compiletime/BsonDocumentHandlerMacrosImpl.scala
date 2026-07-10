@@ -185,16 +185,59 @@ trait BsonDocumentHandlerMacrosImpl
 
   // Entrypoints
 
-  /** Inline write entry point. It shares the derivation pipeline with `derived` while exposing the generated BSON write
-    * body directly to callers that only need serialization.
+  /** Inline write entry point. Structural handlers expose their write body as a cached named def, so this expansion
+    * calls that def directly rather than allocating a `KindlingsBsonDocumentHandler`.
     */
   def deriveInline[A: Type](
       valueExpr: Expr[A],
       configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[Try[BSONDocument]] = {
     implicit val TryBsonDocument: Type[Try[BSONDocument]] = Types.TryBsonDocument
-    val handler = deriveTypeClass[A](configExpr)
-    Expr.quote(Expr.splice(handler).writeTry(Expr.splice(valueExpr)))
+    implicit val ParentHandlerA: Type[reactivemongo.api.bson.BSONDocumentHandler[A]] =
+      Types.ExternalBsonDocumentHandler[A]
+
+    Type[reactivemongo.api.bson.BSONDocumentHandler[A]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toEither match {
+      case Right(parent) => Expr.quote(Expr.splice(parent).writeTry(Expr.splice(valueExpr)))
+      case Left(_)       =>
+        val evaluatedConfig = configExpr.semiEval.toOption
+        Log
+          .namedScope(s"Deriving inline BSON writer for ${Type[A].prettyPrint}") {
+            MIO.scoped { runSafe =>
+              val derivationCtx = DerivationCtx.from[A](
+                derivedType = None,
+                config = configExpr,
+                evaluatedConfig = evaluatedConfig,
+                writeOnly = true
+              )
+              runSafe {
+                for {
+                  _ <- ensureStandardExtensionsLoaded()
+                  // Derive the root rule body directly: `deriveResultRecursively` would additionally emit the
+                  // handler helper used by `derived`, which is deliberately absent from an inline expansion.
+                  _ <- deriveResultRecursivelyViaRules[A](using derivationCtx)
+                  writeCaller <- derivationCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-write-body")
+                  cache <- derivationCtx.cache.get
+                } yield writeCaller match {
+                  case Some(call) => cache.toValDefs.use(_ => call(valueExpr))
+                  case None       =>
+                    Environment.reportErrorAndAbort(
+                      s"Inline BSON writing is not available for ${Type[A].prettyPrint}; derive a handler instead"
+                    )
+                }
+              }
+            }
+          }
+          .runToExprOrFail(
+            "KindlingsBsonDocumentHandler.write",
+            infoRendering = if (shouldWeLogDerivation) RenderFrom(Log.Level.Info) else DontRender,
+            errorRendering = if (shouldWeLogDerivation) RenderFrom(Log.Level.Info) else DontRender,
+            timeout = derivationTimeout
+          ) { (_, errors) =>
+            s"Cannot derive inline BSON writer for ${Type[A].prettyPrint}: ${errors.map(_.getMessage).mkString(", ")}"
+          }
+    }
   }
 
   def deriveTypeClass[A: Type](
@@ -664,7 +707,8 @@ trait BsonDocumentHandlerMacrosImpl
       derivedType: Option[??],
       config: Expr[BsonDocumentHandlerConfig],
       evaluatedConfig: Option[BsonDocumentHandlerConfig],
-      flattenStack: List[String]
+      flattenStack: List[String],
+      writeOnly: Boolean
   ) {
 
     def nest[B: Type]: DerivationCtx[B] = DerivationCtx(
@@ -673,7 +717,8 @@ trait BsonDocumentHandlerMacrosImpl
       derivedType = derivedType,
       config = config,
       evaluatedConfig = evaluatedConfig,
-      flattenStack = flattenStack
+      flattenStack = flattenStack,
+      writeOnly = writeOnly
     )
 
     def nestFlattened[B: Type]: DerivationCtx[B] =
@@ -719,6 +764,65 @@ trait BsonDocumentHandlerMacrosImpl
       } yield ()
     }
 
+    /** Cache a handler read body as a named def, then expose it as a regular lambda. The def is emitted around the
+      * final handler instance, so it is safe to call from Scala 3 sibling splices and does not require LambdaBuilder.
+      */
+    def cacheReadBody[B: Type](
+        body: Expr[BSONDocument] => MIO[Expr[Try[B]]]
+    ): MIO[Expr[BSONDocument => Try[B]]] = {
+      implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val TryBT: Type[Try[B]] = Types.TryCtor[B]
+      val key = "cached-read-body"
+      val builder = ValDefBuilder.ofDef1[BSONDocument, Try[B]](s"read_${Type[B].shortName}", "document")
+      if (writeOnly)
+        MIO.pure(Expr.quote { (_: BSONDocument) =>
+          scala.util.Failure(new UnsupportedOperationException("read body omitted")): Try[B]
+        })
+      else
+        for {
+          state <- cache.get
+          _ <-
+            if (builder.isBuilt(state, key)) MIO.pure(())
+            else
+              for {
+                _ <- cache.forwardDeclare(key, builder)
+                _ <- MIO.scoped { runSafe =>
+                  runSafe(cache.buildCachedWith(key, builder) { case (_, document) => runSafe(body(document)) })
+                }
+              } yield ()
+          caller <- cache.get1Ary[BSONDocument, Try[B]](key)
+        } yield {
+          val call = caller.get
+          directLambda[BSONDocument, Try[B]](call)
+        }
+    }
+
+    /** See [[cacheReadBody]]. */
+    def cacheWriteBody[B: Type](
+        body: Expr[B] => MIO[Expr[Try[BSONDocument]]]
+    ): MIO[Expr[B => Try[BSONDocument]]] = {
+      implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+      val key = "cached-write-body"
+      val builder = ValDefBuilder.ofDef1[B, Try[BSONDocument]](s"write_${Type[B].shortName}", "value")
+      for {
+        state <- cache.get
+        _ <-
+          if (builder.isBuilt(state, key)) MIO.pure(())
+          else
+            for {
+              _ <- cache.forwardDeclare(key, builder)
+              _ <- MIO.scoped { runSafe =>
+                runSafe(cache.buildCachedWith(key, builder) { case (_, value) => runSafe(body(value)) })
+              }
+            } yield ()
+        caller <- cache.get1Ary[B, Try[BSONDocument]](key)
+      } yield {
+        val call = caller.get
+        directLambda[B, Try[BSONDocument]](call)
+      }
+    }
+
     override def toString: String = s"BSONDocumentHandler[${tpe.prettyPrint}]"
   }
 
@@ -726,7 +830,8 @@ trait BsonDocumentHandlerMacrosImpl
     def from[A: Type](
         derivedType: Option[??],
         config: Expr[BsonDocumentHandlerConfig],
-        evaluatedConfig: Option[BsonDocumentHandlerConfig]
+        evaluatedConfig: Option[BsonDocumentHandlerConfig],
+        writeOnly: Boolean = false
     ): DerivationCtx[A] =
       DerivationCtx(
         tpe = Type[A],
@@ -734,7 +839,8 @@ trait BsonDocumentHandlerMacrosImpl
         derivedType = derivedType,
         config = config,
         evaluatedConfig = evaluatedConfig,
-        flattenStack = Nil
+        flattenStack = Nil,
+        writeOnly = writeOnly
       )
   }
 
@@ -964,52 +1070,46 @@ trait BsonDocumentHandlerMacrosImpl
             })
           }
           .map(_.build[reactivemongo.api.bson.BSONValue])
-        readLambda <- LambdaBuilder
-          .of1[BSONDocument]("doc")
-          .traverse { docExpr =>
-            val readLoop: Expr[scala.collection.mutable.Builder[Item, CtorResult]] = Expr.quote {
-              val readItem = Expr.splice(readItemFn)
-              val collBuilder = Expr.splice(factoryExpr).newBuilder
-              Expr.splice(docExpr).get("values") match {
-                case Some(arr: reactivemongo.api.bson.BSONArray) =>
-                  var err: Throwable = null
-                  var i = 0
-                  val values = arr.values
-                  while (err == null && i < values.length) {
-                    try collBuilder += readItem(values(i))
-                    catch { case e: Exception => err = e }
-                    i += 1
-                  }
-                  if (err != null) throw err
-                case _ =>
-                  throw new IllegalArgumentException("Expected BSONArray in 'values' field")
-              }
-              collBuilder
+        readLambda <- ctx.cacheReadBody[A] { docExpr =>
+          val readLoop: Expr[scala.collection.mutable.Builder[Item, CtorResult]] = Expr.quote {
+            val readItem = Expr.splice(readItemFn)
+            val collBuilder = Expr.splice(factoryExpr).newBuilder
+            Expr.splice(docExpr).get("values") match {
+              case Some(arr: reactivemongo.api.bson.BSONArray) =>
+                var err: Throwable = null
+                var i = 0
+                val values = arr.values
+                while (err == null && i < values.length) {
+                  try collBuilder += readItem(values(i))
+                  catch { case e: Exception => err = e }
+                  i += 1
+                }
+                if (err != null) throw err
+              case _ =>
+                throw new IllegalArgumentException("Expected BSONArray in 'values' field")
             }
-            val buildResultExpr = buildStep.ctor(readLoop)
-            collectBuildResult[A](buildStep, buildResultExpr.asInstanceOf[Expr[Any]])
+            collBuilder
           }
-          .map(_.build[scala.util.Try[A]])
-        writeLambda <- LambdaBuilder
-          .of1[A]("value")
-          .traverse { valueExpr =>
-            MIO.pure(Expr.quote {
-              val writeItem = Expr.splice(writeItemFn)
-              val iterable = Expr
-                .splice(isCollection.asIterable(valueExpr))
-                .asInstanceOf[Iterable[Item]]
-              val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONValue]
-              var err: Throwable = null
-              val iter = iterable.iterator
-              while (err == null && iter.hasNext)
-                try builder += writeItem(iter.next())
-                catch { case e: Exception => err = e }
-              if (err != null) scala.util.Failure(err)
-              else
-                scala.util.Success(BSONDocument("values" -> reactivemongo.api.bson.BSONArray(builder.result())))
-            })
-          }
-          .map(_.build[scala.util.Try[BSONDocument]])
+          val buildResultExpr = buildStep.ctor(readLoop)
+          collectBuildResult[A](buildStep, buildResultExpr.asInstanceOf[Expr[Any]])
+        }
+        writeLambda <- ctx.cacheWriteBody[A] { valueExpr =>
+          MIO.pure(Expr.quote {
+            val writeItem = Expr.splice(writeItemFn)
+            val iterable = Expr
+              .splice(isCollection.asIterable(valueExpr))
+              .asInstanceOf[Iterable[Item]]
+            val builder = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONValue]
+            var err: Throwable = null
+            val iter = iterable.iterator
+            while (err == null && iter.hasNext)
+              try builder += writeItem(iter.next())
+              catch { case e: Exception => err = e }
+            if (err != null) scala.util.Failure(err)
+            else
+              scala.util.Success(BSONDocument("values" -> reactivemongo.api.bson.BSONArray(builder.result())))
+          })
+        }
       } yield Rule.matched(Expr.quote {
         hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
           .handlerInstance[A](
@@ -1054,118 +1154,112 @@ trait BsonDocumentHandlerMacrosImpl
       for {
         valueReaderExpr <- resolveBsonReader[Value](valueCtx)
         valueWriterExpr <- resolveBsonWriter[Value](valueCtx)
-        readLambda <- LambdaBuilder
-          .of1[BSONDocument]("doc")
-          .traverse { docExpr =>
-            val readLoop: Expr[scala.collection.mutable.Builder[Pair, CtorResult]] = keyReaderOpt match {
-              case Some(keyReaderExpr) =>
-                Expr.quote {
-                  val valueReader = Expr.splice(valueReaderExpr)
-                  val keyReader = Expr.splice(keyReaderExpr)
-                  val mapBuilder = Expr.splice(factoryExpr).newBuilder
-                  var err: Throwable = null
-                  val iter = Expr.splice(docExpr).elements.iterator
-                  while (err == null && iter.hasNext) {
-                    val el = iter.next()
-                    keyReader.readTry(el.name) match {
-                      case scala.util.Success(k) =>
-                        valueReader.readTry(el.value) match {
-                          case scala.util.Success(v) =>
-                            mapBuilder += Expr.splice(
-                              isMap.pair(Expr.quote(k), Expr.quote(v))
-                            )
-                          case scala.util.Failure(e) => err = e
-                        }
-                      case scala.util.Failure(e) => err = e
-                    }
-                  }
-                  if (err != null) throw err
-                  mapBuilder
-                }
-              case None =>
-                Expr.quote {
-                  val valueReader = Expr.splice(valueReaderExpr)
-                  val mapBuilder = Expr.splice(factoryExpr).newBuilder
-                  var err: Throwable = null
-                  val iter = Expr.splice(docExpr).elements.iterator
-                  while (err == null && iter.hasNext) {
-                    val el = iter.next()
-                    valueReader.readTry(el.value) match {
-                      case scala.util.Success(v) =>
-                        mapBuilder += Expr.splice(
-                          isMap.pair(
-                            Expr.quote(el.name.asInstanceOf[Key]),
-                            Expr.quote(v)
+        readLambda <- ctx.cacheReadBody[A] { docExpr =>
+          val readLoop: Expr[scala.collection.mutable.Builder[Pair, CtorResult]] = keyReaderOpt match {
+            case Some(keyReaderExpr) =>
+              Expr.quote {
+                val valueReader = Expr.splice(valueReaderExpr)
+                val keyReader = Expr.splice(keyReaderExpr)
+                val mapBuilder = Expr.splice(factoryExpr).newBuilder
+                var err: Throwable = null
+                val iter = Expr.splice(docExpr).elements.iterator
+                while (err == null && iter.hasNext) {
+                  val el = iter.next()
+                  keyReader.readTry(el.name) match {
+                    case scala.util.Success(k) =>
+                      valueReader.readTry(el.value) match {
+                        case scala.util.Success(v) =>
+                          mapBuilder += Expr.splice(
+                            isMap.pair(Expr.quote(k), Expr.quote(v))
                           )
+                        case scala.util.Failure(e) => err = e
+                      }
+                    case scala.util.Failure(e) => err = e
+                  }
+                }
+                if (err != null) throw err
+                mapBuilder
+              }
+            case None =>
+              Expr.quote {
+                val valueReader = Expr.splice(valueReaderExpr)
+                val mapBuilder = Expr.splice(factoryExpr).newBuilder
+                var err: Throwable = null
+                val iter = Expr.splice(docExpr).elements.iterator
+                while (err == null && iter.hasNext) {
+                  val el = iter.next()
+                  valueReader.readTry(el.value) match {
+                    case scala.util.Success(v) =>
+                      mapBuilder += Expr.splice(
+                        isMap.pair(
+                          Expr.quote(el.name.asInstanceOf[Key]),
+                          Expr.quote(v)
                         )
-                      case scala.util.Failure(e) => err = e
-                    }
+                      )
+                    case scala.util.Failure(e) => err = e
                   }
-                  if (err != null) throw err
-                  mapBuilder
                 }
-            }
-            val buildResultExpr = buildStep.ctor(readLoop)
-            collectBuildResult[A](buildStep, buildResultExpr.asInstanceOf[Expr[Any]])
+                if (err != null) throw err
+                mapBuilder
+              }
           }
-          .map(_.build[scala.util.Try[A]])
-        writeLambda <- LambdaBuilder
-          .of1[A]("value")
-          .traverse { valueExpr =>
-            keyWriterOpt match {
-              case Some(keyWriterExpr) =>
-                MIO.pure(Expr.quote {
-                  val valueWriter = Expr.splice(valueWriterExpr)
-                  val keyWriter = Expr.splice(keyWriterExpr)
-                  val iterable =
-                    Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
-                  val elements = scala.collection.mutable.ListBuffer
-                    .empty[reactivemongo.api.bson.BSONElement]
-                  var err: Throwable = null
-                  val iter = iterable.iterator
-                  while (err == null && iter.hasNext) {
-                    val pair = iter.next()
-                    keyWriter.writeTry(pair._1) match {
-                      case scala.util.Success(keyStr) =>
-                        valueWriter.writeTry(pair._2) match {
-                          case scala.util.Success(bson) =>
-                            elements +=
-                              reactivemongo.api.bson.BSONElement(keyStr, bson)
-                          case scala.util.Failure(e) => err = e
-                        }
-                      case scala.util.Failure(e) => err = e
-                    }
+          val buildResultExpr = buildStep.ctor(readLoop)
+          collectBuildResult[A](buildStep, buildResultExpr.asInstanceOf[Expr[Any]])
+        }
+        writeLambda <- ctx.cacheWriteBody[A] { valueExpr =>
+          keyWriterOpt match {
+            case Some(keyWriterExpr) =>
+              MIO.pure(Expr.quote {
+                val valueWriter = Expr.splice(valueWriterExpr)
+                val keyWriter = Expr.splice(keyWriterExpr)
+                val iterable =
+                  Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
+                val elements = scala.collection.mutable.ListBuffer
+                  .empty[reactivemongo.api.bson.BSONElement]
+                var err: Throwable = null
+                val iter = iterable.iterator
+                while (err == null && iter.hasNext) {
+                  val pair = iter.next()
+                  keyWriter.writeTry(pair._1) match {
+                    case scala.util.Success(keyStr) =>
+                      valueWriter.writeTry(pair._2) match {
+                        case scala.util.Success(bson) =>
+                          elements +=
+                            reactivemongo.api.bson.BSONElement(keyStr, bson)
+                        case scala.util.Failure(e) => err = e
+                      }
+                    case scala.util.Failure(e) => err = e
                   }
-                  if (err != null) scala.util.Failure(err)
-                  else scala.util.Success(BSONDocument(elements.result()*))
-                })
-              case None =>
-                MIO.pure(Expr.quote {
-                  val valueWriter = Expr.splice(valueWriterExpr)
-                  val iterable =
-                    Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
-                  val elements = scala.collection.mutable.ListBuffer
-                    .empty[reactivemongo.api.bson.BSONElement]
-                  var err: Throwable = null
-                  val iter = iterable.iterator
-                  while (err == null && iter.hasNext) {
-                    val pair = iter.next()
-                    valueWriter.writeTry(pair._2) match {
-                      case scala.util.Success(bson) =>
-                        elements += reactivemongo.api.bson
-                          .BSONElement(
-                            pair._1.asInstanceOf[String],
-                            bson.asInstanceOf[reactivemongo.api.bson.BSONValue]
-                          )
-                      case scala.util.Failure(e) => err = e
-                    }
+                }
+                if (err != null) scala.util.Failure(err)
+                else scala.util.Success(BSONDocument(elements.result()*))
+              })
+            case None =>
+              MIO.pure(Expr.quote {
+                val valueWriter = Expr.splice(valueWriterExpr)
+                val iterable =
+                  Expr.splice(isMap.asIterable(valueExpr)).asInstanceOf[Iterable[(Key, Value)]]
+                val elements = scala.collection.mutable.ListBuffer
+                  .empty[reactivemongo.api.bson.BSONElement]
+                var err: Throwable = null
+                val iter = iterable.iterator
+                while (err == null && iter.hasNext) {
+                  val pair = iter.next()
+                  valueWriter.writeTry(pair._2) match {
+                    case scala.util.Success(bson) =>
+                      elements += reactivemongo.api.bson
+                        .BSONElement(
+                          pair._1.asInstanceOf[String],
+                          bson.asInstanceOf[reactivemongo.api.bson.BSONValue]
+                        )
+                    case scala.util.Failure(e) => err = e
                   }
-                  if (err != null) scala.util.Failure(err)
-                  else scala.util.Success(BSONDocument(elements.result()*))
-                })
-            }
+                }
+                if (err != null) scala.util.Failure(err)
+                else scala.util.Success(BSONDocument(elements.result()*))
+              })
           }
-          .map(_.build[scala.util.Try[BSONDocument]])
+        }
       } yield Rule.matched(Expr.quote {
         hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
           .handlerInstance[A](
@@ -1821,107 +1915,101 @@ trait BsonDocumentHandlerMacrosImpl
       } else {
         val fieldsNel = NonEmptyList(fieldsList.head, fieldsList.tail)
         for {
-          readLambda <- LambdaBuilder
-            .of1[BSONDocument]("doc")
-            .traverse { docExpr =>
-              @scala.annotation.nowarn("msg=is never used")
-              implicit val StringT: Type[String] = Types.String
-              val knownKeyExprs: List[Expr[String]] = fieldsList.flatMap { case (fName, param) =>
-                if (isFlattened(param)) None
-                else Some(resolveFieldKeyExpr(fName, param, ctx))
-              }
-              val unexpectedCheckExpr: Expr[scala.util.Try[Unit]] =
-                buildUnexpectedFieldsCheck(docExpr, knownKeyExprs, ctx)
-              for {
-                // Build one typed local var per field (see kindlings-runtime-perf technique #2). Each var holds the
-                // field's typed value directly, eliminating the Array[Any]+sequenceTries boxing path (every primitive
-                // field would otherwise round-trip through java.lang.Integer/Boolean via Array[Any]).
-                fieldVarDefsNel <- fieldsNel.parTraverse { case (fName, param) =>
-                  import param.tpe.Underlying as Field
-                  if (
-                    isFlattened(param) && (Type[Field] =:= Type[A] || ctx.flattenStack.contains(
-                      Type[Field].prettyPrint
-                    ))
-                  ) {
-                    val err = BsonDocumentHandlerDerivationError.CannotFlattenRecursiveField(
-                      fName,
-                      Type[A].prettyPrint
-                    )
-                    Log.error(err.message) >> MIO.fail(err)
-                  } else {
-                    val fieldCtx = if (isFlattened(param)) ctx.nestFlattened[Field] else ctx.nest[Field]
-                    buildFieldVarDef[Field](docExpr, fName, param, fieldCtx)
-                  }
-                }
-              } yield {
-                val combinedVars = fieldVarDefsNel.toList.foldLeft(
-                  ValDefsTraverse.pure(List.empty): ValDefs[List[(String, Expr_??, Expr[scala.util.Try[Unit]])]]
-                )((acc, vd) => acc.map2(vd) { case (l, e) => l :+ e })
-                combinedVars.use { fieldInfos =>
-                  // fieldInfo: (name, getter.as_??, assignExpr). Construct takes getters as field values.
-                  val fieldMap: Map[String, Expr_??] = fieldsList
-                    .zip(fieldInfos)
-                    .map { case ((name, _), (_, getter, _)) =>
-                      (name, getter)
-                    }
-                    .toMap
-                  val constructExpr: Expr[A] = foldInstanceFree(constructor, "Constructor")(
-                    onTypes = _ => Map.empty,
-                    onValues = _ => fieldMap
-                  ) match {
-                    case Right(expr) => expr.value.asInstanceOf[Expr[A]]
-                    case Left(error) =>
-                      Environment.reportErrorAndAbort(
-                        BsonDocumentHandlerDerivationError
-                          .CannotConstructType(Type[A].prettyPrint, Some(error))
-                          .message
-                      )
-                  }
-                  // Sequence per-field assign-with-failure-propagation: short-circuit on the first read failure.
-                  val sequencedAssigns: Expr[scala.util.Try[Unit]] = fieldInfos
-                    .map(_._3)
-                    .foldRight(
-                      Expr.quote(scala.util.Success(()): scala.util.Try[Unit])
-                    ) { (next, acc) =>
-                      Expr.quote(Expr.splice(acc).flatMap(_ => Expr.splice(next)))
-                    }
-                  Expr.quote {
-                    Expr
-                      .splice(sequencedAssigns)
-                      .flatMap(_ => Expr.splice(unexpectedCheckExpr))
-                      .map(_ => Expr.splice(constructExpr))
-                  }
-                }
-              }
+          readLambda <- ctx.cacheReadBody[A] { docExpr =>
+            @scala.annotation.nowarn("msg=is never used")
+            implicit val StringT: Type[String] = Types.String
+            val knownKeyExprs: List[Expr[String]] = fieldsList.flatMap { case (fName, param) =>
+              if (isFlattened(param)) None
+              else Some(resolveFieldKeyExpr(fName, param, ctx))
             }
-            .map(_.build[Try[A]])
-
-          writeLambda <- LambdaBuilder
-            .of1[A]("value")
-            .traverse { valueExpr =>
-              val fieldValues = fieldValuesAt(valueExpr)
-              val fieldValuesNel = NonEmptyList(fieldValues.head, fieldValues.tail)
-              fieldValuesNel
-                .parTraverse { case (fName, fieldValue) =>
-                  import fieldValue.Underlying as Field
-                  val param = fieldsList.find(_._1 == fName).get._2
+            val unexpectedCheckExpr: Expr[scala.util.Try[Unit]] =
+              buildUnexpectedFieldsCheck(docExpr, knownKeyExprs, ctx)
+            for {
+              // Build one typed local var per field (see kindlings-runtime-perf technique #2). Each var holds the
+              // field's typed value directly, eliminating the Array[Any]+sequenceTries boxing path (every primitive
+              // field would otherwise round-trip through java.lang.Integer/Boolean via Array[Any]).
+              fieldVarDefsNel <- fieldsNel.parTraverse { case (fName, param) =>
+                import param.tpe.Underlying as Field
+                if (
+                  isFlattened(param) && (Type[Field] =:= Type[A] || ctx.flattenStack.contains(
+                    Type[Field].prettyPrint
+                  ))
+                ) {
+                  val err = BsonDocumentHandlerDerivationError.CannotFlattenRecursiveField(
+                    fName,
+                    Type[A].prettyPrint
+                  )
+                  Log.error(err.message) >> MIO.fail(err)
+                } else {
                   val fieldCtx = if (isFlattened(param)) ctx.nestFlattened[Field] else ctx.nest[Field]
-                  buildFieldWriteExpr[Field](fName, param, fieldValue.value.asInstanceOf[Expr[Field]], fieldCtx)
+                  buildFieldVarDef[Field](docExpr, fName, param, fieldCtx)
                 }
-                .map { etries =>
-                  val listTryExpr = etries.toList.foldRight(
-                    Expr.quote(
-                      scala.util.Success(List.empty[Option[reactivemongo.api.bson.BSONElement]]): Try[
-                        List[Option[reactivemongo.api.bson.BSONElement]]
-                      ]
-                    )
-                  ) { case (et, acc) =>
-                    Expr.quote(for { tail <- Expr.splice(acc); head <- Expr.splice(et) } yield tail ++ head)
+              }
+            } yield {
+              val combinedVars = fieldVarDefsNel.toList.foldLeft(
+                ValDefsTraverse.pure(List.empty): ValDefs[List[(String, Expr_??, Expr[scala.util.Try[Unit]])]]
+              )((acc, vd) => acc.map2(vd) { case (l, e) => l :+ e })
+              combinedVars.use { fieldInfos =>
+                // fieldInfo: (name, getter.as_??, assignExpr). Construct takes getters as field values.
+                val fieldMap: Map[String, Expr_??] = fieldsList
+                  .zip(fieldInfos)
+                  .map { case ((name, _), (_, getter, _)) =>
+                    (name, getter)
                   }
-                  Expr.quote(Expr.splice(listTryExpr).map(options => BSONDocument(options.flatten*)))
+                  .toMap
+                val constructExpr: Expr[A] = foldInstanceFree(constructor, "Constructor")(
+                  onTypes = _ => Map.empty,
+                  onValues = _ => fieldMap
+                ) match {
+                  case Right(expr) => expr.value.asInstanceOf[Expr[A]]
+                  case Left(error) =>
+                    Environment.reportErrorAndAbort(
+                      BsonDocumentHandlerDerivationError
+                        .CannotConstructType(Type[A].prettyPrint, Some(error))
+                        .message
+                    )
                 }
+                // Sequence per-field assign-with-failure-propagation: short-circuit on the first read failure.
+                val sequencedAssigns: Expr[scala.util.Try[Unit]] = fieldInfos
+                  .map(_._3)
+                  .foldRight(
+                    Expr.quote(scala.util.Success(()): scala.util.Try[Unit])
+                  ) { (next, acc) =>
+                    Expr.quote(Expr.splice(acc).flatMap(_ => Expr.splice(next)))
+                  }
+                Expr.quote {
+                  Expr
+                    .splice(sequencedAssigns)
+                    .flatMap(_ => Expr.splice(unexpectedCheckExpr))
+                    .map(_ => Expr.splice(constructExpr))
+                }
+              }
             }
-            .map(_.build[Try[BSONDocument]])
+          }
+
+          writeLambda <- ctx.cacheWriteBody[A] { valueExpr =>
+            val fieldValues = fieldValuesAt(valueExpr)
+            val fieldValuesNel = NonEmptyList(fieldValues.head, fieldValues.tail)
+            fieldValuesNel
+              .parTraverse { case (fName, fieldValue) =>
+                import fieldValue.Underlying as Field
+                val param = fieldsList.find(_._1 == fName).get._2
+                val fieldCtx = if (isFlattened(param)) ctx.nestFlattened[Field] else ctx.nest[Field]
+                buildFieldWriteExpr[Field](fName, param, fieldValue.value.asInstanceOf[Expr[Field]], fieldCtx)
+              }
+              .map { etries =>
+                val listTryExpr = etries.toList.foldRight(
+                  Expr.quote(
+                    scala.util.Success(List.empty[Option[reactivemongo.api.bson.BSONElement]]): Try[
+                      List[Option[reactivemongo.api.bson.BSONElement]]
+                    ]
+                  )
+                ) { case (et, acc) =>
+                  Expr.quote(for { tail <- Expr.splice(acc); head <- Expr.splice(et) } yield tail ++ head)
+                }
+                Expr.quote(Expr.splice(listTryExpr).map(options => BSONDocument(options.flatten*)))
+              }
+          }
         } yield Expr.quote {
           hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.handlerInstance[A](
             readFn = Expr.splice(readLambda),
@@ -2024,69 +2112,63 @@ trait BsonDocumentHandlerMacrosImpl
 
               // Build read lambda - fold dispatch chain (reverse so earlier children match first)
               val readLambdaIO =
-                LambdaBuilder
-                  .of1[BSONDocument]("doc")
-                  .traverse { docExpr =>
-                    val errorExpr = Expr.quote {
-                      scala.util
-                        .Failure(
-                          new IllegalArgumentException(
-                            "Unknown type discriminator: " +
-                              Expr.splice(docExpr).get(Expr.splice(discriminatorFieldExpr)).getOrElse("<none>") +
-                              ". Expected one of: " + Expr.splice(knownNamesExpr)
-                          )
-                        ): scala.util.Try[A]
-                    }
-                    MIO.pure(
-                      readDispatchers.foldRight(errorExpr) { case (dispatcher, elseExpr) =>
-                        dispatcher(docExpr, elseExpr)
-                      }
-                    )
+                ctx.cacheReadBody[A] { docExpr =>
+                  val errorExpr = Expr.quote {
+                    scala.util
+                      .Failure(
+                        new IllegalArgumentException(
+                          "Unknown type discriminator: " +
+                            Expr.splice(docExpr).get(Expr.splice(discriminatorFieldExpr)).getOrElse("<none>") +
+                            ". Expected one of: " + Expr.splice(knownNamesExpr)
+                        )
+                      ): scala.util.Try[A]
                   }
-                  .map(_.build[scala.util.Try[A]])
+                  MIO.pure(
+                    readDispatchers.foldRight(errorExpr) { case (dispatcher, elseExpr) =>
+                      dispatcher(docExpr, elseExpr)
+                    }
+                  )
+                }
 
               // Build write lambda via Enum.parMatchOn
               val writeLambdaIO =
-                LambdaBuilder
-                  .of1[A]("value")
-                  .traverse { valueExpr =>
-                    enumm
-                      .parMatchOn[MIO, scala.util.Try[BSONDocument]](valueExpr) { matched =>
-                        import matched.{value as enumCaseValue, Underlying as ChildType}
-                        // Compute discriminator value from the configured TypeNaming
-                        val simpleName = Type[ChildType].shortName
-                        val fullName = fullNameOf[ChildType]
-                        val discriminatorNameExpr: Expr[String] = discriminatorFor(simpleName, fullName)
-                        Expr.singletonOf[ChildType] match {
-                          case Some(_) =>
-                            MIO.pure(Expr.quote {
-                              scala.util.Success(
-                                BSONDocument(
-                                  Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
-                                )
+                ctx.cacheWriteBody[A] { valueExpr =>
+                  enumm
+                    .parMatchOn[MIO, scala.util.Try[BSONDocument]](valueExpr) { matched =>
+                      import matched.{value as enumCaseValue, Underlying as ChildType}
+                      // Compute discriminator value from the configured TypeNaming
+                      val simpleName = Type[ChildType].shortName
+                      val fullName = fullNameOf[ChildType]
+                      val discriminatorNameExpr: Expr[String] = discriminatorFor(simpleName, fullName)
+                      Expr.singletonOf[ChildType] match {
+                        case Some(_) =>
+                          MIO.pure(Expr.quote {
+                            scala.util.Success(
+                              BSONDocument(
+                                Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
                               )
-                            })
-                          case None =>
-                            deriveResultRecursively[ChildType](using ctx.nest[ChildType]).map { childHandler =>
-                              Expr.quote {
-                                Expr.splice(childHandler).writeTry(Expr.splice(enumCaseValue)).map { childDoc =>
-                                  childDoc ++
-                                    BSONDocument(
-                                      Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
-                                    )
-                                }
+                            )
+                          })
+                        case None =>
+                          deriveResultRecursively[ChildType](using ctx.nest[ChildType]).map { childHandler =>
+                            Expr.quote {
+                              Expr.splice(childHandler).writeTry(Expr.splice(enumCaseValue)).map { childDoc =>
+                                childDoc ++
+                                  BSONDocument(
+                                    Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
+                                  )
                               }
                             }
-                        }
+                          }
                       }
-                      .flatMap {
-                        case Some(result) => MIO.pure(result)
-                        case None         =>
-                          val err = BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint)
-                          Log.error(err.message) >> MIO.fail(err)
-                      }
-                  }
-                  .map(_.build[scala.util.Try[BSONDocument]])
+                    }
+                    .flatMap {
+                      case Some(result) => MIO.pure(result)
+                      case None         =>
+                        val err = BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint)
+                        Log.error(err.message) >> MIO.fail(err)
+                    }
+                }
 
               for {
                 readLambda <- readLambdaIO
