@@ -18,6 +18,17 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       )
     }
 
+    test("root derivation honors a BSONDocumentHandler implicit") {
+      implicit val external: BSONDocumentHandler[Person] = BSONDocumentHandler[Person](
+        _ => Person("from external", 0),
+        _ => BSONDocument("external" -> true)
+      )
+      val handler: KindlingsBsonDocumentHandler[Person] = KindlingsBsonDocumentHandler.derived[Person]
+
+      assertEquals(handler.readDocument(BSONDocument.empty).get, Person("from external", 0))
+      assertEquals(handler.writeTry(Person("ignored", 1)).get, BSONDocument("external" -> true))
+    }
+
     test("derive for empty case class") {
       @scala.annotation.nowarn("msg=is never used|unused")
       val handler: KindlingsBsonDocumentHandler[Empty] = KindlingsBsonDocumentHandler.derived[Empty]

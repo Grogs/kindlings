@@ -41,6 +41,8 @@ trait BsonDocumentHandlerMacrosImpl
 
   private[compiletime] object Types {
     def BsonDocumentHandler: Type.Ctor1[KindlingsBsonDocumentHandler] = Type.Ctor1.of[KindlingsBsonDocumentHandler]
+    def ExternalBsonDocumentHandler: Type.Ctor1[reactivemongo.api.bson.BSONDocumentHandler] =
+      Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentHandler]
     def ExternalBsonDocumentReader: Type.Ctor1[reactivemongo.api.bson.BSONDocumentReader] =
       Type.Ctor1.of[reactivemongo.api.bson.BSONDocumentReader]
     def ExternalBsonDocumentWriter: Type.Ctor1[reactivemongo.api.bson.BSONDocumentWriter] =
@@ -807,11 +809,20 @@ trait BsonDocumentHandlerMacrosImpl
   object UseImplicitWhenAvailableRule extends DerivationRule("use implicit when available") {
     def apply[A: DerivationCtx]: MIO[Rule.Applicability[Expr[KindlingsBsonDocumentHandler[A]]]] = {
       implicit val HandlerA: Type[KindlingsBsonDocumentHandler[A]] = Types.BsonDocumentHandler[A]
+      implicit val ParentHandlerA: Type[reactivemongo.api.bson.BSONDocumentHandler[A]] =
+        Types.ExternalBsonDocumentHandler[A]
       Log.info(s"Attempting to summon implicit BSONDocumentHandler[${Type[A].prettyPrint}]") >> {
-        Type[KindlingsBsonDocumentHandler[A]]
+        Type[reactivemongo.api.bson.BSONDocumentHandler[A]]
           .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
           .toEither match {
-          case Right(instance) =>
+          case Right(parent) =>
+            val instance = Expr.quote {
+              hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                .handlerInstance[A](
+                  (document: BSONDocument) => Expr.splice(parent).readDocument(document),
+                  (value: A) => Expr.splice(parent).writeTry(value)
+                )
+            }
             Log.info(s"Found implicit BSONDocumentHandler[${Type[A].prettyPrint}]") >>
               ctx.setInstance[A](instance) >> MIO.pure(Rule.matched(instance))
           case Left(reason) =>

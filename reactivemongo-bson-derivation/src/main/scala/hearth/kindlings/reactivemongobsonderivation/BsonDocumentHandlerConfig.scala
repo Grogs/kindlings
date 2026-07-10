@@ -8,8 +8,8 @@ package hearth.kindlings.reactivemongobsonderivation
   * @param typeNaming
   *   Strategy to map sealed-trait/enum case types to discriminator values (default: `TypeNaming.FullName`)
   * @param discriminatorFieldName
-  *   The field name used for sealed trait/enum discrimination (None = wrapper-style, Some(name) = discriminator-style,
-  *   default: Some("className"))
+  *   The field name used for sealed trait/enum discrimination. It must be defined; wrapper-style ADT encoding is not
+  *   supported. The default is `Some("className")`.
   * @param skipUnexpectedFields
   *   If true, skip unknown fields during decoding (default: true)
   */
@@ -19,6 +19,8 @@ final case class BsonDocumentHandlerConfig(
     discriminatorFieldName: Option[String] = BsonDocumentHandlerConfig.defaultDiscriminatorFieldName,
     skipUnexpectedFields: Boolean = true
 ) {
+
+  require(discriminatorFieldName.nonEmpty, "BSON sealed-ADT derivation requires a discriminator field")
 
   /** Backward-compatible accessor: the field naming strategy as a `String => String` function. */
   def fieldNameMapper: String => String = fieldNaming
