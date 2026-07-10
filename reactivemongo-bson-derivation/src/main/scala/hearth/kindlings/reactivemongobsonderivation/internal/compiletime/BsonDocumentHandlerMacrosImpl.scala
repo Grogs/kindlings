@@ -2134,86 +2134,136 @@ trait BsonDocumentHandlerMacrosImpl
             .mkString(", ")
           val knownNamesExpr = Expr(knownNames)
 
-          // Derive typed read-dispatch functions for each child
-          childrenDiscriminatorNel
-            .parTraverse { case (discriminatorNameExpr, child) =>
-              import child.Underlying as ChildType
-              deriveChildReadDispatch[A, ChildType](discriminatorNameExpr, discriminatorFieldExpr)
-            }
-            .flatMap { readDispatchersNel =>
-              val readDispatchers = readDispatchersNel.toList
-
-              // Build read lambda - fold dispatch chain (reverse so earlier children match first)
-              val readLambdaIO =
-                ctx.cacheReadBody[A] { docExpr =>
-                  val errorExpr = Expr.quote {
-                    scala.util
-                      .Failure(
-                        new IllegalArgumentException(
-                          "Unknown type discriminator: " +
-                            Expr.splice(docExpr).get(Expr.splice(discriminatorFieldExpr)).getOrElse("<none>") +
-                            ". Expected one of: " + Expr.splice(knownNamesExpr)
-                        )
-                      ): scala.util.Try[A]
-                  }
-                  MIO.pure(
-                    readDispatchers.foldRight(errorExpr) { case (dispatcher, elseExpr) =>
-                      dispatcher(docExpr, elseExpr)
-                    }
-                  )
-                }
-
-              // Build write lambda via Enum.parMatchOn
-              val writeLambdaIO =
-                ctx.cacheWriteBody[A] { valueExpr =>
-                  enumm
-                    .parMatchOn[MIO, scala.util.Try[BSONDocument]](valueExpr) { matched =>
-                      import matched.{value as enumCaseValue, Underlying as ChildType}
-                      // Compute discriminator value from the configured TypeNaming
-                      val simpleName = Type[ChildType].shortName
-                      val fullName = fullNameOf[ChildType]
-                      val discriminatorNameExpr: Expr[String] = discriminatorFor(simpleName, fullName)
-                      Expr.singletonOf[ChildType] match {
-                        case Some(_) =>
-                          MIO.pure(Expr.quote {
-                            scala.util.Success(
-                              BSONDocument(
-                                Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
-                              )
-                            )
-                          })
-                        case None =>
-                          deriveResultRecursively[ChildType](using ctx.nest[ChildType]).map { childHandler =>
-                            Expr.quote {
-                              Expr.splice(childHandler).writeTry(Expr.splice(enumCaseValue)).map { childDoc =>
-                                childDoc ++
-                                  BSONDocument(
+          // Inline writing has no reader call site. Avoid deriving child read dispatchers (and their handler helpers)
+          // altogether; only the write body is needed.
+          if (ctx.writeOnly) {
+            ctx
+              .cacheWriteBody[A] { valueExpr =>
+                enumm
+                  .parMatchOn[MIO, scala.util.Try[BSONDocument]](valueExpr) { matched =>
+                    import matched.{value as enumCaseValue, Underlying as ChildType}
+                    val discriminatorNameExpr = discriminatorFor(Type[ChildType].shortName, fullNameOf[ChildType])
+                    Expr.singletonOf[ChildType] match {
+                      case Some(_) =>
+                        MIO.pure(Expr.quote {
+                          scala.util.Success(
+                            BSONDocument(Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr))
+                          )
+                        })
+                      case None =>
+                        resolveBsonWriter[ChildType](ctx.nest[ChildType]).map { writer =>
+                          Expr.quote {
+                            Expr.splice(writer).writeTry(Expr.splice(enumCaseValue)).flatMap {
+                              case document: BSONDocument =>
+                                scala.util.Success(
+                                  document ++ BSONDocument(
                                     Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
                                   )
-                              }
+                                )
+                              case value =>
+                                scala.util.Failure(new IllegalArgumentException(s"Expected BSONDocument, got $value"))
                             }
                           }
-                      }
+                        }
                     }
-                    .flatMap {
-                      case Some(result) => MIO.pure(result)
-                      case None         =>
-                        val err = BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint)
-                        Log.error(err.message) >> MIO.fail(err)
-                    }
-                }
-
-              for {
-                readLambda <- readLambdaIO
-                writeLambda <- writeLambdaIO
-              } yield Expr.quote {
-                hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                  .handlerInstance[A](
-                    readFn = Expr.splice(readLambda),
-                    writeFn = Expr.splice(writeLambda)
-                  )
+                  }
+                  .flatMap {
+                    case Some(result) => MIO.pure(result)
+                    case None         =>
+                      MIO.fail(BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint))
+                  }
               }
-            }
+              .map { writeBody =>
+                Expr.quote {
+                  hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                    .handlerInstance[A](
+                      readFn =
+                        (_: BSONDocument) => scala.util.Failure(new UnsupportedOperationException("read body omitted")),
+                      writeFn = Expr.splice(writeBody)
+                    )
+                }
+              }
+          } else
+            // Derive typed read-dispatch functions for each child
+            childrenDiscriminatorNel
+              .parTraverse { case (discriminatorNameExpr, child) =>
+                import child.Underlying as ChildType
+                deriveChildReadDispatch[A, ChildType](discriminatorNameExpr, discriminatorFieldExpr)
+              }
+              .flatMap { readDispatchersNel =>
+                val readDispatchers = readDispatchersNel.toList
+
+                // Build read lambda - fold dispatch chain (reverse so earlier children match first)
+                val readLambdaIO =
+                  ctx.cacheReadBody[A] { docExpr =>
+                    val errorExpr = Expr.quote {
+                      scala.util
+                        .Failure(
+                          new IllegalArgumentException(
+                            "Unknown type discriminator: " +
+                              Expr.splice(docExpr).get(Expr.splice(discriminatorFieldExpr)).getOrElse("<none>") +
+                              ". Expected one of: " + Expr.splice(knownNamesExpr)
+                          )
+                        ): scala.util.Try[A]
+                    }
+                    MIO.pure(
+                      readDispatchers.foldRight(errorExpr) { case (dispatcher, elseExpr) =>
+                        dispatcher(docExpr, elseExpr)
+                      }
+                    )
+                  }
+
+                // Build write lambda via Enum.parMatchOn
+                val writeLambdaIO =
+                  ctx.cacheWriteBody[A] { valueExpr =>
+                    enumm
+                      .parMatchOn[MIO, scala.util.Try[BSONDocument]](valueExpr) { matched =>
+                        import matched.{value as enumCaseValue, Underlying as ChildType}
+                        // Compute discriminator value from the configured TypeNaming
+                        val simpleName = Type[ChildType].shortName
+                        val fullName = fullNameOf[ChildType]
+                        val discriminatorNameExpr: Expr[String] = discriminatorFor(simpleName, fullName)
+                        Expr.singletonOf[ChildType] match {
+                          case Some(_) =>
+                            MIO.pure(Expr.quote {
+                              scala.util.Success(
+                                BSONDocument(
+                                  Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
+                                )
+                              )
+                            })
+                          case None =>
+                            deriveResultRecursively[ChildType](using ctx.nest[ChildType]).map { childHandler =>
+                              Expr.quote {
+                                Expr.splice(childHandler).writeTry(Expr.splice(enumCaseValue)).map { childDoc =>
+                                  childDoc ++
+                                    BSONDocument(
+                                      Expr.splice(discriminatorFieldExpr) -> Expr.splice(discriminatorNameExpr)
+                                    )
+                                }
+                              }
+                            }
+                        }
+                      }
+                      .flatMap {
+                        case Some(result) => MIO.pure(result)
+                        case None         =>
+                          val err = BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint)
+                          Log.error(err.message) >> MIO.fail(err)
+                      }
+                  }
+
+                for {
+                  readLambda <- readLambdaIO
+                  writeLambda <- writeLambdaIO
+                } yield Expr.quote {
+                  hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                    .handlerInstance[A](
+                      readFn = Expr.splice(readLambda),
+                      writeFn = Expr.splice(writeLambda)
+                    )
+                }
+              }
       }
     }
 
