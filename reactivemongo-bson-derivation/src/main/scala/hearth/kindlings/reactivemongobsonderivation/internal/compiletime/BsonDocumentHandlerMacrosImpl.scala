@@ -137,6 +137,25 @@ trait BsonDocumentHandlerMacrosImpl
     }
   }
 
+  private def directionalDefaultExpr[A: Type](param: Parameter): Option[Expr[A]] = {
+    val scalaDefault =
+      if (param.hasDefault)
+        param.defaultValue.flatMap { method =>
+          foldInstanceFree(method, "Default value")(
+            onTypes = _ => Map.empty,
+            onValues = _ => Map.empty
+          ).toOption.map(_.value.asInstanceOf[Expr[A]])
+        }
+      else None
+    val annotationDefault = {
+      val annotationType = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue[A]]
+      getAnnotationValueUntyped(param)(annotationType).map { value =>
+        Expr.quote(Expr.splice(value.asTyped[A]).asInstanceOf[A])
+      }
+    }
+    scalaDefault.orElse(annotationDefault)
+  }
+
   /** Try to extract the underlying String from an Expr[String] if it's a literal. */
   protected def extractStringLiteral(expr: Expr[String]): Option[String] = expr.value
 
@@ -287,19 +306,36 @@ trait BsonDocumentHandlerMacrosImpl
                     fields
                       .parTraverse { case (name, parameter) =>
                         import parameter.tpe.Underlying as Field
-                        val key = resolveDirectionalFieldKey(
-                          name,
-                          parameter,
-                          readerCtx.config,
-                          readerCtx.evaluatedConfig
+                        implicit val IgnoreT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
+                          Types.ignoreAnn
+                        if (
+                          hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter)
                         )
-                        annotatedReader[Field](parameter)
-                          .fold(resolveDirectionalReader[Field](readerCtx.nest[Field]))(MIO.pure)
-                          .map { fieldReader =>
-                            name -> Expr.quote {
-                              Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
-                            }.as_??
+                          directionalDefaultExpr[Field](parameter) match {
+                            case Some(default) => MIO.pure(name -> default.as_??)
+                            case None          =>
+                              MIO.fail(
+                                BsonDocumentHandlerDerivationError.CannotIgnoreFieldWithoutDefault(
+                                  name,
+                                  Type[Field].prettyPrint
+                                )
+                              )
                           }
+                        else {
+                          val key = resolveDirectionalFieldKey(
+                            name,
+                            parameter,
+                            readerCtx.config,
+                            readerCtx.evaluatedConfig
+                          )
+                          annotatedReader[Field](parameter)
+                            .fold(resolveDirectionalReader[Field](readerCtx.nest[Field]))(MIO.pure)
+                            .map { fieldReader =>
+                              name -> Expr.quote {
+                                Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
+                              }.as_??
+                            }
+                        }
                       }
                       .map { values =>
                         val construct = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(

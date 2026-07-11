@@ -89,6 +89,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         WithPerFieldIO("a", "b")
       )
     }
+
+    test("reader reconstructs @Ignore fields from defaults") {
+      val reader = KindlingsBsonDocumentReader.derived[WithIgnoredField]
+      assertEquals(
+        reader.readDocument(BSONDocument("id" -> 1, "name" -> "test")).get,
+        WithIgnoredField(1, visible = true, "test")
+      )
+    }
   }
 
   group("standalone document writers") {
