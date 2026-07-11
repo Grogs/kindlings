@@ -4,8 +4,6 @@ import hearth.MacroSuite
 import reactivemongo.api.bson.BSONDocument
 
 final case class DerivesPerson(name: String, age: Int) derives KindlingsBsonDocumentHandler
-final case class DerivesReaderPerson(name: String, age: Int) derives KindlingsBsonDocumentReader
-final case class DerivesWriterPerson(name: String, age: Int) derives KindlingsBsonDocumentWriter
 
 object OpaqueBsonTypes {
   opaque type UserId = Int
@@ -28,15 +26,6 @@ final class BsonDocumentHandlerScala3Spec extends MacroSuite {
 
       assertEquals(handler.writeTry(value).get, document)
       assertEquals(handler.readDocument(document).get, value)
-    }
-
-    test("derives standalone reader and writer subtypes") {
-      val document = BSONDocument("name" -> "Alice", "age" -> 30)
-      val reader = summon[KindlingsBsonDocumentReader[DerivesReaderPerson]]
-      val writer = summon[KindlingsBsonDocumentWriter[DerivesWriterPerson]]
-
-      assertEquals(reader.readDocument(document).get, DerivesReaderPerson("Alice", 30))
-      assertEquals(writer.writeTry(DerivesWriterPerson("Alice", 30)).get, document)
     }
   }
 

@@ -1,14 +1,8 @@
 # ReactiveMongo BSON Derivation
 
-Drop-in replacement for ReactiveMongo BSON macros — independently derives document readers, document writers, or combined handlers for case classes, sealed traits, Scala 3 enums, value types, options, collections, and maps.
+Drop-in replacement for ReactiveMongo BSON macros — derives standard `BSONDocumentHandler` instances for case classes, sealed traits, Scala 3 enums, value types, options, collections, and maps.
 
-| Kindlings API | ReactiveMongo result | Use when |
-|---|---|---|
-| `KindlingsBsonDocumentReader.derived[A]` | `BSONDocumentReader[A]` | Only decoding is available or required |
-| `KindlingsBsonDocumentWriter.derived[A]` | `BSONDocumentWriter[A]` | Only encoding is available or required |
-| `KindlingsBsonDocumentHandler.derived[A]` | `BSONDocumentHandler[A]` | Both directions are required |
-
-A combined `KindlingsBsonDocumentHandler[A]` also extends both directional Kindlings traits and all instances remain compatible with ReactiveMongo's standard APIs.
+Derived `KindlingsBsonDocumentHandler[A]` instances extend ReactiveMongo's `BSONDocumentHandler[A]`, so they can be passed anywhere a `BSONDocumentHandler`, `BSONDocumentReader`, `BSONDocumentWriter`, `BSONReader`, or `BSONWriter` is required.
 
 ## Installation
 
@@ -50,30 +44,6 @@ println(FastShowPretty.render(handler.readDocument(document).get, RenderConfig.D
 
 `derived[A]` also supports sanely-automatic derivation: place a derived instance in a companion object or implicit scope and it is used for nested fields.
 
-### Independent readers and writers
-
-Standalone derivation never requires the inactive direction. This is useful for intentionally asymmetric models:
-
-```scala
-import hearth.kindlings.reactivemongobsonderivation._
-import reactivemongo.api.bson._
-
-case class Secret(value: String)
-case class Request(secret: Secret)
-
-implicit val secretReader: BSONReader[Secret] = BSONReader.from {
-  case BSONString(value) => scala.util.Success(Secret(value))
-  case value => scala.util.Failure(new IllegalArgumentException(s"Expected BSONString, got $value"))
-}
-
-val requestReader: BSONDocumentReader[Request] =
-  KindlingsBsonDocumentReader.derived[Request]
-```
-
-The corresponding writer path works with only a `BSONWriter[Secret]`. Non-`String` map keys similarly require only `KeyReader[K]` for a standalone reader, only `KeyWriter[K]` for a standalone writer, and both for a combined handler.
-
-On Scala 3 all three Kindlings types support `derives`.
-
 ### Inline writing
 
 When only serialization is needed, `KindlingsBsonDocumentHandler.write(value)` is a supported inline alternative. It emits the BSON write path directly instead of allocating a handler instance:
@@ -95,7 +65,7 @@ It uses the same implicit `BsonDocumentHandlerConfig` and honors an existing `BS
 | `AnyVal` value classes | Encoded as their underlying value |
 | Scala 3 named tuples | Including single-element named tuples; field labels become BSON keys |
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array`, and standard supported collection types |
-| Maps | `Map[K, V]`; non-`String` keys need the active direction's `KeyReader[K]` and/or `KeyWriter[K]` |
+| Maps | `Map[K, V]`; non-`String` keys need both `KeyReader[K]` and `KeyWriter[K]` |
 | Existing BSON codecs | User-provided `BSONReader[A]` and `BSONWriter[A]` take precedence |
 
 ## Configuration
@@ -307,8 +277,6 @@ The derived handler is compatible with ReactiveMongo APIs because it is a `BSOND
 
 | ReactiveMongo BSON | Kindlings BSON |
 |---|---|
-| `Macros.reader[A]` | `KindlingsBsonDocumentReader.derived[A]` |
-| `Macros.writer[A]` | `KindlingsBsonDocumentWriter.derived[A]` |
 | `Macros.handler[A]` | `KindlingsBsonDocumentHandler.derived[A]` |
 | `MacroConfiguration()` | `BsonDocumentHandlerConfig.default` |
 | `@Key("name")` | `@FieldName("name")` |
@@ -321,6 +289,7 @@ Check existing BSON round-trip tests when migrating, especially for custom field
 ## Limitations
 
 - JVM only.
+- Derives combined document handlers; it does not provide legacy standalone `Macros.reader` or `Macros.writer` entry points.
 - Non-sealed legacy `UnionType` ADTs are not supported. Prefer a sealed protocol sub-hierarchy, even when the broader
   domain parent must remain open, or write a manual handler. For example, `sealed trait ExternalEvent extends Event`
   can contain only the event variants admitted by the BSON protocol while `Event` remains extensible.

@@ -2,10 +2,7 @@ package hearth.kindlings.reactivemongobsonderivation
 
 import reactivemongo.api.bson.BSONDocumentHandler
 
-trait KindlingsBsonDocumentHandler[A]
-    extends BSONDocumentHandler[A]
-    with KindlingsBsonDocumentReader[A]
-    with KindlingsBsonDocumentWriter[A]
+trait KindlingsBsonDocumentHandler[A] extends BSONDocumentHandler[A]
 object KindlingsBsonDocumentHandler extends KindlingsBsonDocumentHandlerCompanionCompat {
 
   /** Special type — if its implicit is in scope then macros will log the derivation process. */

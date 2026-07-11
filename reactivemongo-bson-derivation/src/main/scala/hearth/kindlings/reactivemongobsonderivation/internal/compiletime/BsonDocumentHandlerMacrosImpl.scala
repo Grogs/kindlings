@@ -9,8 +9,6 @@ import hearth.std.*
 import hearth.kindlings.reactivemongobsonderivation.{
   BsonDocumentHandlerConfig,
   KindlingsBsonDocumentHandler,
-  KindlingsBsonDocumentReader,
-  KindlingsBsonDocumentWriter,
   TypeNaming
 }
 import reactivemongo.api.bson.BSONDocument
@@ -80,10 +78,6 @@ trait BsonDocumentHandlerMacrosImpl
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
       Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
-        case method if method.isImplicit => method.asUntyped
-      } ++ Type.of[KindlingsBsonDocumentReader.type].methods.collect {
-        case method if method.isImplicit => method.asUntyped
-      } ++ Type.of[KindlingsBsonDocumentWriter.type].methods.collect {
         case method if method.isImplicit => method.asUntyped
       }
   }
@@ -250,72 +244,8 @@ trait BsonDocumentHandlerMacrosImpl
     }
   }
 
-  def deriveReaderTypeClass[A: Type](
-      configExpr: Expr[BsonDocumentHandlerConfig]
-  ): Expr[KindlingsBsonDocumentReader[A]] = {
-    implicit val ReaderA: Type[reactivemongo.api.bson.BSONDocumentReader[A]] = Types.ExternalBsonDocumentReader[A]
-    implicit val KindlingsReaderA: Type[KindlingsBsonDocumentReader[A]] = Type.of[KindlingsBsonDocumentReader[A]]
-    val readerInScope =
-      if (
-        Type[KindlingsBsonDocumentReader[A]].summonExprIgnoring(Types.ignoredAutoDerivationMethods*).toOption.nonEmpty
-      )
-        None
-      else
-        Type[reactivemongo.api.bson.BSONDocumentReader[A]]
-          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-          .toOption
-    readerInScope match {
-      case Some(reader) =>
-        Expr.quote {
-          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.readerInstance[A](
-            document => Expr.splice(reader).readDocument(document)
-          )
-        }
-      case None =>
-        val handler = deriveTypeClass[A](configExpr, readOnly = true)
-        Expr.quote {
-          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.readerInstance[A](
-            document => Expr.splice(handler).readDocument(document)
-          )
-        }
-    }
-  }
-
-  def deriveWriterTypeClass[A: Type](
-      configExpr: Expr[BsonDocumentHandlerConfig]
-  ): Expr[KindlingsBsonDocumentWriter[A]] = {
-    implicit val WriterA: Type[reactivemongo.api.bson.BSONDocumentWriter[A]] = Types.ExternalBsonDocumentWriter[A]
-    implicit val KindlingsWriterA: Type[KindlingsBsonDocumentWriter[A]] = Type.of[KindlingsBsonDocumentWriter[A]]
-    val writerInScope =
-      if (
-        Type[KindlingsBsonDocumentWriter[A]].summonExprIgnoring(Types.ignoredAutoDerivationMethods*).toOption.nonEmpty
-      )
-        None
-      else
-        Type[reactivemongo.api.bson.BSONDocumentWriter[A]]
-          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-          .toOption
-    writerInScope match {
-      case Some(writer) =>
-        Expr.quote {
-          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.writerInstance[A](
-            value => Expr.splice(writer).writeTry(value)
-          )
-        }
-      case None =>
-        val handler = deriveTypeClass[A](configExpr, writeOnly = true)
-        Expr.quote {
-          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.writerInstance[A](
-            value => Expr.splice(handler).writeTry(value)
-          )
-        }
-    }
-  }
-
   def deriveTypeClass[A: Type](
-      configExpr: Expr[BsonDocumentHandlerConfig],
-      readOnly: Boolean = false,
-      writeOnly: Boolean = false
+      configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentHandler[A]] = {
     val selfType: Option[??] = Some(Type[A].as_??)
     // semiEval now works for common configs because fieldNaming/typeNaming are sealed traits.
@@ -346,9 +276,7 @@ trait BsonDocumentHandlerMacrosImpl
           val ctx = DerivationCtx.from[A](
             derivedType = selfType,
             config = configExpr,
-            evaluatedConfig = evaluatedConfig,
-            readOnly = readOnly,
-            writeOnly = writeOnly
+            evaluatedConfig = evaluatedConfig
           )
           fromCtx(ctx)
         }
@@ -416,7 +344,6 @@ trait BsonDocumentHandlerMacrosImpl
       config: Expr[BsonDocumentHandlerConfig],
       evaluatedConfig: Option[BsonDocumentHandlerConfig],
       flattenStack: List[String],
-      readOnly: Boolean,
       writeOnly: Boolean
   ) {
 
@@ -427,7 +354,6 @@ trait BsonDocumentHandlerMacrosImpl
       config = config,
       evaluatedConfig = evaluatedConfig,
       flattenStack = flattenStack,
-      readOnly = readOnly,
       writeOnly = writeOnly
     )
 
@@ -515,27 +441,22 @@ trait BsonDocumentHandlerMacrosImpl
       implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
       val key = "cached-write-body"
       val builder = ValDefBuilder.ofDef1[B, Try[BSONDocument]](s"write_${Type[B].shortName}", "value")
-      if (readOnly)
-        MIO.pure(Expr.quote { (_: B) =>
-          scala.util.Failure(new UnsupportedOperationException("write body omitted")): Try[BSONDocument]
-        })
-      else
-        for {
-          state <- cache.get
-          _ <-
-            if (builder.isBuilt(state, key)) MIO.pure(())
-            else
-              for {
-                _ <- cache.forwardDeclare(key, builder)
-                _ <- MIO.scoped { runSafe =>
-                  runSafe(cache.buildCachedWith(key, builder) { case (_, value) => runSafe(body(value)) })
-                }
-              } yield ()
-          caller <- cache.get1Ary[B, Try[BSONDocument]](key)
-        } yield {
-          val call = caller.get
-          directLambda[B, Try[BSONDocument]](call)
-        }
+      for {
+        state <- cache.get
+        _ <-
+          if (builder.isBuilt(state, key)) MIO.pure(())
+          else
+            for {
+              _ <- cache.forwardDeclare(key, builder)
+              _ <- MIO.scoped { runSafe =>
+                runSafe(cache.buildCachedWith(key, builder) { case (_, value) => runSafe(body(value)) })
+              }
+            } yield ()
+        caller <- cache.get1Ary[B, Try[BSONDocument]](key)
+      } yield {
+        val call = caller.get
+        directLambda[B, Try[BSONDocument]](call)
+      }
     }
 
     override def toString: String = s"BSONDocumentHandler[${tpe.prettyPrint}]"
@@ -546,7 +467,6 @@ trait BsonDocumentHandlerMacrosImpl
         derivedType: Option[??],
         config: Expr[BsonDocumentHandlerConfig],
         evaluatedConfig: Option[BsonDocumentHandlerConfig],
-        readOnly: Boolean = false,
         writeOnly: Boolean = false
     ): DerivationCtx[A] =
       DerivationCtx(
@@ -556,7 +476,6 @@ trait BsonDocumentHandlerMacrosImpl
         config = config,
         evaluatedConfig = evaluatedConfig,
         flattenStack = Nil,
-        readOnly = readOnly,
         writeOnly = writeOnly
       )
   }
@@ -702,17 +621,7 @@ trait BsonDocumentHandlerMacrosImpl
               val unwrapLambda = directLambda[A, Inner](isValueType.value.unwrap)
               // A write-only expansion never evaluates the read body. In particular, do not derive an inner
               // handler merely to obtain a reader when only its writer is required.
-              val readerWriterMIO = if (ctx.readOnly) {
-                resolveBsonReader[Inner](ctx.nest[Inner]).map { reader =>
-                  val unusedWriter: Expr[reactivemongo.api.bson.BSONWriter[Inner]] = Expr.quote {
-                    new reactivemongo.api.bson.BSONWriter[Inner] {
-                      def writeTry(value: Inner): Try[reactivemongo.api.bson.BSONValue] =
-                        scala.util.Failure(new UnsupportedOperationException("write body omitted"))
-                    }
-                  }
-                  (reader, unusedWriter)
-                }
-              } else if (ctx.writeOnly) {
+              val readerWriterMIO = if (ctx.writeOnly) {
                 resolveBsonWriter[Inner](ctx.nest[Inner]).map { writer =>
                   val unusedReader: Expr[reactivemongo.api.bson.BSONReader[Inner]] = Expr.quote {
                     new reactivemongo.api.bson.BSONReader[Inner] {

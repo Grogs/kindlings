@@ -11,10 +11,6 @@ package allowed {
   object Instances {
     val handler: hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler[Allowed] =
       hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler.derived[Allowed]
-    val reader: hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentReader[Allowed] =
-      hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentReader.derived[Allowed]
-    val writer: hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentWriter[Allowed] =
-      hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentWriter.derived[Allowed]
   }
 }
 
@@ -28,26 +24,17 @@ package viaimport {
 
 final class DerivationPolicySpec extends MacroSuite {
   group("ReactiveMongo BSON derivation policy") {
-    test("permits all entry points in an allowed scope") {
-      val document = BSONDocument("value" -> 1)
-      assertEquals(allowed.Instances.handler.writeTry(Allowed(1)).get, document)
-      assertEquals(allowed.Instances.reader.readDocument(document).get, Allowed(1))
-      assertEquals(allowed.Instances.writer.writeTry(Allowed(1)).get, document)
+    test("permits an allowed scope") {
+      assertEquals(allowed.Instances.handler.writeTry(Allowed(1)).get, BSONDocument("value" -> 1))
     }
 
     test("permits the opt-in import") {
       assertEquals(viaimport.Instances.handler.writeTry(Imported("x")).get, BSONDocument("value" -> "x"))
     }
 
-    test("denies every entry point in an unapproved scope") {
+    test("denies an unapproved scope") {
       compileErrors(
         """hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler.derived[hearth.kindlings.reactivemongobsonpolicytest.Denied]"""
-      ).check("is enabled only in the following scopes")
-      compileErrors(
-        """hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentReader.derived[hearth.kindlings.reactivemongobsonpolicytest.Denied]"""
-      ).check("is enabled only in the following scopes")
-      compileErrors(
-        """hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentWriter.derived[hearth.kindlings.reactivemongobsonpolicytest.Denied]"""
       ).check("is enabled only in the following scopes")
     }
   }

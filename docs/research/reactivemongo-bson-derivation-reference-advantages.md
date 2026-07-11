@@ -31,24 +31,19 @@ Do not claim that the reference cannot derive sealed traits: it can, with the de
 
 ### Scala 3 `derives` syntax
 
-Kindlings exposes distinct `KindlingsBsonDocumentReader[A]`, `KindlingsBsonDocumentWriter[A]`, and
-`KindlingsBsonDocumentHandler[A]` subtypes with Scala 3 `derived` givens. Consequently:
+Kindlings exposes a distinct subtype, `KindlingsBsonDocumentHandler[A]`, and a Scala 3 `derived` given. Consequently:
 
 ```scala
-case class Input(name: String) derives KindlingsBsonDocumentReader
-case class Output(name: String) derives KindlingsBsonDocumentWriter
 case class Person(name: String) derives KindlingsBsonDocumentHandler
 ```
 
-work and produce values usable wherever ReactiveMongo expects the corresponding standard document type class. Reader
-and writer derivation are independent: nested `BSONReader` or `BSONWriter` instances are required only for the active
-direction, including direction-specific `KeyReader`/`KeyWriter` requirements for maps. The reference exposes
+works and produces a value usable wherever ReactiveMongo expects a `BSONDocumentHandler[A]`. The reference exposes
 macro entry points such as `Macros.handler[A]` and `Macros.handlerOpts[A, Opts]`
 ([source](https://github.com/ReactiveMongo/ReactiveMongo-BSON/blob/0447b636b749600e7a35a986c98a46c8a307b017/api/src/main/scala-3/Macros.scala#L220-L255)),
 not a derivable type-class companion.
 
-**Suggested wording:** “Scala 3 supports `derives` for Kindlings BSON document readers, writers, and handlers while
-retaining standard ReactiveMongo interoperability.”
+**Suggested wording:** “Scala 3 supports `derives KindlingsBsonDocumentHandler`, while retaining
+`BSONDocumentHandler` interoperability.”
 
 ### Write-only inline serialization
 
