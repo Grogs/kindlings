@@ -105,6 +105,24 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
       assertEquals(reader.readDocument(document).get, tree)
     }
+
+    test("user-provided document reader overrides structural reader derivation") {
+      implicit val external: BSONDocumentReader[Person] = BSONDocumentReader.from { _ =>
+        scala.util.Success(Person("external reader", 1))
+      }
+      val reader = KindlingsBsonDocumentReader.derived[Person]
+
+      assertEquals(reader.readDocument(BSONDocument.empty).get, Person("external reader", 1))
+    }
+
+    test("user-provided document writer overrides structural writer derivation") {
+      implicit val external: BSONDocumentWriter[Person] = BSONDocumentWriter.from { _ =>
+        scala.util.Success(BSONDocument("externalWriter" -> true))
+      }
+      val writer = KindlingsBsonDocumentWriter.derived[Person]
+
+      assertEquals(writer.writeTry(Person("ignored", 1)).get, BSONDocument("externalWriter" -> true))
+    }
   }
 
   group("KindlingsBsonDocumentHandler") {

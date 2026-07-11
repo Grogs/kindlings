@@ -81,6 +81,10 @@ trait BsonDocumentHandlerMacrosImpl
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
       Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
         case method if method.isImplicit => method.asUntyped
+      } ++ Type.of[KindlingsBsonDocumentReader.type].methods.collect {
+        case method if method.isImplicit => method.asUntyped
+      } ++ Type.of[KindlingsBsonDocumentWriter.type].methods.collect {
+        case method if method.isImplicit => method.asUntyped
       }
   }
 
@@ -249,22 +253,62 @@ trait BsonDocumentHandlerMacrosImpl
   def deriveReaderTypeClass[A: Type](
       configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentReader[A]] = {
-    val handler = deriveTypeClass[A](configExpr, readOnly = true)
-    Expr.quote {
-      hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.readerInstance[A](
-        document => Expr.splice(handler).readDocument(document)
+    implicit val ReaderA: Type[reactivemongo.api.bson.BSONDocumentReader[A]] = Types.ExternalBsonDocumentReader[A]
+    implicit val KindlingsReaderA: Type[KindlingsBsonDocumentReader[A]] = Type.of[KindlingsBsonDocumentReader[A]]
+    val readerInScope =
+      if (
+        Type[KindlingsBsonDocumentReader[A]].summonExprIgnoring(Types.ignoredAutoDerivationMethods*).toOption.nonEmpty
       )
+        None
+      else
+        Type[reactivemongo.api.bson.BSONDocumentReader[A]]
+          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+          .toOption
+    readerInScope match {
+      case Some(reader) =>
+        Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.readerInstance[A](
+            document => Expr.splice(reader).readDocument(document)
+          )
+        }
+      case None =>
+        val handler = deriveTypeClass[A](configExpr, readOnly = true)
+        Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.readerInstance[A](
+            document => Expr.splice(handler).readDocument(document)
+          )
+        }
     }
   }
 
   def deriveWriterTypeClass[A: Type](
       configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentWriter[A]] = {
-    val handler = deriveTypeClass[A](configExpr, writeOnly = true)
-    Expr.quote {
-      hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.writerInstance[A](
-        value => Expr.splice(handler).writeTry(value)
+    implicit val WriterA: Type[reactivemongo.api.bson.BSONDocumentWriter[A]] = Types.ExternalBsonDocumentWriter[A]
+    implicit val KindlingsWriterA: Type[KindlingsBsonDocumentWriter[A]] = Type.of[KindlingsBsonDocumentWriter[A]]
+    val writerInScope =
+      if (
+        Type[KindlingsBsonDocumentWriter[A]].summonExprIgnoring(Types.ignoredAutoDerivationMethods*).toOption.nonEmpty
       )
+        None
+      else
+        Type[reactivemongo.api.bson.BSONDocumentWriter[A]]
+          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+          .toOption
+    writerInScope match {
+      case Some(writer) =>
+        Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.writerInstance[A](
+            value => Expr.splice(writer).writeTry(value)
+          )
+        }
+      case None =>
+        val handler = deriveTypeClass[A](configExpr, writeOnly = true)
+        Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories.writerInstance[A](
+            value => Expr.splice(handler).writeTry(value)
+          )
+        }
     }
   }
 
