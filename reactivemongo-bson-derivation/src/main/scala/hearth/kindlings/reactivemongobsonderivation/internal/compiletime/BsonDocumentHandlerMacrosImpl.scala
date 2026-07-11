@@ -269,19 +269,10 @@ trait BsonDocumentHandlerMacrosImpl
                     fields
                       .parTraverse { case (name, parameter) =>
                         import parameter.tpe.Underlying as Field
-                        implicit val FieldReaderT: Type[reactivemongo.api.bson.BSONReader[Field]] =
-                          Types.BsonReader[Field]
-                        Type[reactivemongo.api.bson.BSONReader[Field]]
-                          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-                          .toEither match {
-                          case Right(fieldReader) =>
-                            MIO.pure(name -> Expr.quote {
-                              Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr(name)).get).get
-                            }.as_??)
-                          case Left(reason) =>
-                            MIO.fail(
-                              BsonDocumentHandlerDerivationError.CannotDeriveField(Type[Field].prettyPrint, reason)
-                            )
+                        resolveDirectionalReader[Field](readerCtx.nest[Field]).map { fieldReader =>
+                          name -> Expr.quote {
+                            Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr(name)).get).get
+                          }.as_??
                         }
                       }
                       .map { values =>
@@ -306,13 +297,46 @@ trait BsonDocumentHandlerMacrosImpl
       cache: MLocal[ValDefsCache],
       config: Expr[BsonDocumentHandlerConfig],
       evaluatedConfig: Option[BsonDocumentHandlerConfig]
-  )
+  ) {
+    def nest[B: Type]: ReaderCtx[B] = ReaderCtx(Type[B], cache, config, evaluatedConfig)
+  }
 
   object ReaderCtx {
     def from[A: Type](
         config: Expr[BsonDocumentHandlerConfig],
         evaluatedConfig: Option[BsonDocumentHandlerConfig]
     ): ReaderCtx[A] = ReaderCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig)
+  }
+
+  private def resolveDirectionalReader[A: Type](
+      readerCtx: ReaderCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    Type[reactivemongo.api.bson.BSONReader[A]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toEither match {
+      case Right(reader)                                       => MIO.pure(reader)
+      case Left(reason) if CaseClass.parse[A].toEither.isRight =>
+        implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+        deriveReaderBody[A](readerCtx) >> readerCtx.cache
+          .get1Ary[BSONDocument, Try[A]]("cached-reader-body")
+          .flatMap {
+            case Some(call) =>
+              MIO.pure(Expr.quote {
+                new reactivemongo.api.bson.BSONReader[A] {
+                  def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
+                    case document: BSONDocument => Expr.splice(call(Expr.quote(document)))
+                    case other                  =>
+                      scala.util.Failure(new IllegalArgumentException("Expected BSONDocument, got " + other))
+                  }
+                }
+              })
+            case None => MIO.fail(new Exception(s"No cached reader body for ${Type[A].prettyPrint}"))
+          }
+      case Left(reason) =>
+        MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, reason))
+    }
   }
 
   /** Independent writer tracer bullet. Its context and cache contain no reader state. */
@@ -391,22 +415,13 @@ trait BsonDocumentHandlerMacrosImpl
                     fieldValues
                       .parTraverse { case (name, fieldValue) =>
                         import fieldValue.Underlying as Field
-                        implicit val FieldWriterT: Type[reactivemongo.api.bson.BSONWriter[Field]] =
-                          Types.BsonWriter[Field]
-                        Type[reactivemongo.api.bson.BSONWriter[Field]]
-                          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-                          .toEither match {
-                          case Right(fieldWriter) =>
-                            MIO.pure(Expr.quote {
-                              Expr
-                                .splice(fieldWriter)
-                                .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
-                                .map(bson => reactivemongo.api.bson.BSONElement(Expr(name), bson))
-                            })
-                          case Left(reason) =>
-                            MIO.fail(
-                              BsonDocumentHandlerDerivationError.CannotDeriveField(Type[Field].prettyPrint, reason)
-                            )
+                        resolveDirectionalWriter[Field](writerCtx.nest[Field]).map { fieldWriter =>
+                          Expr.quote {
+                            Expr
+                              .splice(fieldWriter)
+                              .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
+                              .map(bson => reactivemongo.api.bson.BSONElement(Expr(name), bson))
+                          }
                         }
                       }
                       .map { elements =>
@@ -433,13 +448,37 @@ trait BsonDocumentHandlerMacrosImpl
       cache: MLocal[ValDefsCache],
       config: Expr[BsonDocumentHandlerConfig],
       evaluatedConfig: Option[BsonDocumentHandlerConfig]
-  )
+  ) {
+    def nest[B: Type]: WriterCtx[B] = WriterCtx(Type[B], cache, config, evaluatedConfig)
+  }
 
   object WriterCtx {
     def from[A: Type](
         config: Expr[BsonDocumentHandlerConfig],
         evaluatedConfig: Option[BsonDocumentHandlerConfig]
     ): WriterCtx[A] = WriterCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig)
+  }
+
+  private def resolveDirectionalWriter[A: Type](
+      writerCtx: WriterCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+    Type[reactivemongo.api.bson.BSONWriter[A]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toEither match {
+      case Right(writer)                                       => MIO.pure(writer)
+      case Left(reason) if CaseClass.parse[A].toEither.isRight =>
+        implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+        implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+        deriveWriterBody[A](writerCtx) >> writerCtx.cache
+          .get1Ary[A, Try[BSONDocument]]("cached-writer-body")
+          .flatMap {
+            case Some(call) => MIO.pure(writerFromDocumentWrite[A](call))
+            case None       => MIO.fail(new Exception(s"No cached writer body for ${Type[A].prettyPrint}"))
+          }
+      case Left(reason) =>
+        MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, reason))
+    }
   }
 
   /** Inline write entry point. Structural handlers expose their write body as a cached named def, so this expansion

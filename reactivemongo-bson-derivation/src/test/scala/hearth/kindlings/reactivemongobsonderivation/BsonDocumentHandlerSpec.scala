@@ -33,6 +33,17 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         RootRead("from-root-reader")
       )
     }
+
+    test("reader derives nested case classes without a writer") {
+      final case class NestedRead(value: String)
+      final case class ReadEnvelope(nested: NestedRead)
+
+      val reader = KindlingsBsonDocumentReader.derived[ReadEnvelope]
+      assertEquals(
+        reader.readDocument(BSONDocument("nested" -> BSONDocument("value" -> "ok"))).get,
+        ReadEnvelope(NestedRead("ok"))
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -56,6 +67,17 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         KindlingsBsonDocumentWriter.derived[RootWrite].writeTry(RootWrite("ignored")).get,
         BSONDocument("source" -> "root-writer")
+      )
+    }
+
+    test("writer derives nested case classes without a reader") {
+      final case class NestedWrite(value: String)
+      final case class WriteEnvelope(nested: NestedWrite)
+
+      val writer = KindlingsBsonDocumentWriter.derived[WriteEnvelope]
+      assertEquals(
+        writer.writeTry(WriteEnvelope(NestedWrite("ok"))).get,
+        BSONDocument("nested" -> BSONDocument("value" -> "ok"))
       )
     }
   }
