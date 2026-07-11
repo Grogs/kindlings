@@ -96,6 +96,15 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       val writer = KindlingsBsonDocumentWriter.derived[Request]
       assertEquals(writer.writeTry(Request(Nested("token"))).get, BSONDocument("nestedValue" -> "token"))
     }
+
+    test("recursive ADTs derive independently in both directions") {
+      val tree: Tree = TreeNode(TreeLeaf("left"), TreeNode(TreeLeaf("middle"), TreeLeaf("right")))
+      val writer: KindlingsBsonDocumentWriter[Tree] = KindlingsBsonDocumentWriter.derived[Tree]
+      val document = writer.writeTry(tree).get
+      val reader: KindlingsBsonDocumentReader[Tree] = KindlingsBsonDocumentReader.derived[Tree]
+
+      assertEquals(reader.readDocument(document).get, tree)
+    }
   }
 
   group("KindlingsBsonDocumentHandler") {
