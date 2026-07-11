@@ -1,0 +1,6 @@
+package hearth.kindlings.reactivemongobsonderivation
+
+import reactivemongo.api.bson.BSONDocumentWriter
+
+trait KindlingsBsonDocumentWriter[A] extends BSONDocumentWriter[A]
+object KindlingsBsonDocumentWriter extends KindlingsBsonDocumentWriterCompanionCompat

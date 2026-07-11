@@ -23,6 +23,16 @@ final private[reactivemongobsonderivation] class BsonDocumentHandlerMacros(val c
   ): c.Expr[scala.util.Try[reactivemongo.api.bson.BSONDocument]] =
     deriveInline[A](value, config).asInstanceOf[c.Expr[scala.util.Try[reactivemongo.api.bson.BSONDocument]]]
 
+  def deriveReaderTypeClassImpl[A: c.WeakTypeTag](
+      config: c.Expr[BsonDocumentHandlerConfig]
+  ): c.Expr[KindlingsBsonDocumentReader[A]] =
+    deriveReaderTypeClass[A](config).asInstanceOf[c.Expr[KindlingsBsonDocumentReader[A]]]
+
+  def deriveWriterTypeClassImpl[A: c.WeakTypeTag](
+      config: c.Expr[BsonDocumentHandlerConfig]
+  ): c.Expr[KindlingsBsonDocumentWriter[A]] =
+    deriveWriterTypeClass[A](config).asInstanceOf[c.Expr[KindlingsBsonDocumentWriter[A]]]
+
   def deriveTypeClassImpl[A: c.WeakTypeTag](
       config: c.Expr[BsonDocumentHandlerConfig]
   ): c.Expr[KindlingsBsonDocumentHandler[A]] =

@@ -9,6 +9,32 @@ import reactivemongo.api.bson as bson
 
 final class BsonDocumentHandlerSpec extends MacroSuite {
 
+  group("standalone document readers and writers") {
+
+    test("reader derivation requires only nested BSONReader") {
+      final case class ReadOnlySecret(value: String)
+      final case class ReadRequest(secret: ReadOnlySecret)
+      implicit val secretReader: BSONReader[ReadOnlySecret] = BSONReader.from {
+        case BSONString(value) => scala.util.Success(ReadOnlySecret(value))
+        case other             => scala.util.Failure(new IllegalArgumentException(s"Expected BSONString, got $other"))
+      }
+
+      val reader: BSONDocumentReader[ReadRequest] = KindlingsBsonDocumentReader.derived[ReadRequest]
+      assertEquals(reader.readDocument(BSONDocument("secret" -> "token")).get, ReadRequest(ReadOnlySecret("token")))
+    }
+
+    test("writer derivation requires only nested BSONWriter") {
+      final case class WriteOnlySecret(value: String)
+      final case class WriteRequest(secret: WriteOnlySecret)
+      implicit val secretWriter: BSONWriter[WriteOnlySecret] = BSONWriter.from[WriteOnlySecret] { secret =>
+        scala.util.Success(BSONString(secret.value))
+      }
+
+      val writer: BSONDocumentWriter[WriteRequest] = KindlingsBsonDocumentWriter.derived[WriteRequest]
+      assertEquals(writer.writeTry(WriteRequest(WriteOnlySecret("token"))).get, BSONDocument("secret" -> "token"))
+    }
+  }
+
   group("KindlingsBsonDocumentHandler") {
 
     test("inline write entry point matches derived handler") {

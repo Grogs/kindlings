@@ -43,8 +43,15 @@ trait BsonCodecResolution {
   }
 
   def resolveBsonReader[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
-    ensureMapKeyCodecs[A]()
     implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
+    if (fieldCtx.writeOnly)
+      return MIO.pure(Expr.quote {
+        new reactivemongo.api.bson.BSONReader[A] {
+          def readTry(value: reactivemongo.api.bson.BSONValue): scala.util.Try[A] =
+            scala.util.Failure(new UnsupportedOperationException("inactive reader"))
+        }
+      })
+    ensureMapKeyCodecs[A]()
     @scala.annotation.nowarn("msg=is never used")
     implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
     @scala.annotation.nowarn("msg=is never used")
@@ -179,8 +186,15 @@ trait BsonCodecResolution {
   }
 
   def resolveBsonWriter[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
-    ensureMapKeyCodecs[A]()
     implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+    if (fieldCtx.readOnly)
+      return MIO.pure(Expr.quote {
+        new reactivemongo.api.bson.BSONWriter[A] {
+          def writeTry(value: A): scala.util.Try[reactivemongo.api.bson.BSONValue] =
+            scala.util.Failure(new UnsupportedOperationException("inactive writer"))
+        }
+      })
+    ensureMapKeyCodecs[A]()
     implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryBsonDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
     @scala.annotation.nowarn("msg=is never used")
