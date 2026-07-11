@@ -63,6 +63,18 @@ final class BsonDocumentHandlerScala3Spec extends MacroSuite {
 
   group("named tuples (Scala 3.7+)") {
 
+    test("standalone single-element named tuple reader") {
+      val reader = KindlingsBsonDocumentReader.derived[(field: Int)]
+      val expected: (field: Int) = Tuple1(3)
+      assertEquals(reader.readDocument(BSONDocument("field" -> 3)).get, expected)
+    }
+
+    test("standalone single-element named tuple writer") {
+      val writer = KindlingsBsonDocumentWriter.derived[(field: Int)]
+      val value: (field: Int) = Tuple1(3)
+      assertEquals(writer.writeTry(value).get, BSONDocument("field" -> 3))
+    }
+
     test("single-element named tuple round-trip") {
       val handler = KindlingsBsonDocumentHandler.derived[(field: Int)]
       val value: (field: Int) = Tuple1(3)
