@@ -293,11 +293,13 @@ trait BsonDocumentHandlerMacrosImpl
                           readerCtx.config,
                           readerCtx.evaluatedConfig
                         )
-                        resolveDirectionalReader[Field](readerCtx.nest[Field]).map { fieldReader =>
-                          name -> Expr.quote {
-                            Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
-                          }.as_??
-                        }
+                        annotatedReader[Field](parameter)
+                          .fold(resolveDirectionalReader[Field](readerCtx.nest[Field]))(MIO.pure)
+                          .map { fieldReader =>
+                            name -> Expr.quote {
+                              Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
+                            }.as_??
+                          }
                       }
                       .map { values =>
                         val construct = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
@@ -446,14 +448,16 @@ trait BsonDocumentHandlerMacrosImpl
                           writerCtx.config,
                           writerCtx.evaluatedConfig
                         )
-                        resolveDirectionalWriter[Field](writerCtx.nest[Field]).map { fieldWriter =>
-                          Expr.quote {
-                            Expr
-                              .splice(fieldWriter)
-                              .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
-                              .map(bson => reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
+                        annotatedWriter[Field](parameter)
+                          .fold(resolveDirectionalWriter[Field](writerCtx.nest[Field]))(MIO.pure)
+                          .map { fieldWriter =>
+                            Expr.quote {
+                              Expr
+                                .splice(fieldWriter)
+                                .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
+                                .map(bson => reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
+                            }
                           }
-                        }
                       }
                       .map { elements =>
                         val sequenced = elements.toList.foldRight(

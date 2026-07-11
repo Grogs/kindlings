@@ -81,6 +81,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         AnnotatedFields("Alice", 30)
       )
     }
+
+    test("reader honors @Reader without consulting @Writer") {
+      val reader = KindlingsBsonDocumentReader.derived[WithPerFieldIO]
+      assertEquals(
+        reader.readDocument(BSONDocument("id" -> "a", "name" -> "b")).get,
+        WithPerFieldIO("a", "b")
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -148,6 +156,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         writer.writeTry(AnnotatedFields("Alice", 30)).get,
         BSONDocument("first_name" -> "Alice", "years_old" -> 30)
+      )
+    }
+
+    test("writer honors @Writer without consulting @Reader") {
+      val writer = KindlingsBsonDocumentWriter.derived[WithPerFieldIO]
+      assertEquals(
+        writer.writeTry(WithPerFieldIO("a", "b")).get,
+        BSONDocument("id" -> "a", "name" -> "b")
       )
     }
   }
