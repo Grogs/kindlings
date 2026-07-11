@@ -4,6 +4,8 @@ import hearth.MacroSuite
 import reactivemongo.api.bson.BSONDocument
 
 final case class DerivesPerson(name: String, age: Int) derives KindlingsBsonDocumentHandler
+final case class DerivesReader(name: String, age: Int) derives KindlingsBsonDocumentReader
+final case class DerivesWriter(name: String, age: Int) derives KindlingsBsonDocumentWriter
 
 object OpaqueBsonTypes {
   opaque type UserId = Int
@@ -26,6 +28,22 @@ final class BsonDocumentHandlerScala3Spec extends MacroSuite {
 
       assertEquals(handler.writeTry(value).get, document)
       assertEquals(handler.readDocument(document).get, value)
+    }
+
+    test("derives a standalone reader without self-initialization recursion") {
+      val reader = summon[KindlingsBsonDocumentReader[DerivesReader]]
+      assertEquals(
+        reader.readDocument(BSONDocument("name" -> "Alice", "age" -> 30)).get,
+        DerivesReader("Alice", 30)
+      )
+    }
+
+    test("derives a standalone writer without self-initialization recursion") {
+      val writer = summon[KindlingsBsonDocumentWriter[DerivesWriter]]
+      assertEquals(
+        writer.writeTry(DerivesWriter("Alice", 30)).get,
+        BSONDocument("name" -> "Alice", "age" -> 30)
+      )
     }
   }
 
