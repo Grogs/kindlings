@@ -378,7 +378,31 @@ trait BsonDocumentHandlerMacrosImpl
     Type[reactivemongo.api.bson.BSONReader[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(reader)                                       => MIO.pure(reader)
+      case Right(reader)                                                         => MIO.pure(reader)
+      case Left(_) if !Type[A].isNamedTuple && Type[A].isInstanceOf[IsValueType] =>
+        Type[A] match {
+          case IsValueType(valueType) =>
+            import valueType.Underlying as Inner
+            resolveDirectionalReader[Inner](readerCtx.nest[Inner]).map { innerReader =>
+              val wrap = directLambda[Inner, A] { inner =>
+                valueType.value.wrap match {
+                  case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
+                    val result = valueType.value.wrap.apply(inner).asInstanceOf[Expr[Either[String, A]]]
+                    Expr.quote(
+                      Expr.splice(result).fold(message => throw new IllegalArgumentException(message), identity)
+                    )
+                  case _ => valueType.value.wrap.apply(inner).asInstanceOf[Expr[A]]
+                }
+              }
+              Expr.quote {
+                new reactivemongo.api.bson.BSONReader[A] {
+                  def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] =
+                    Expr.splice(innerReader).readTry(value).map(Expr.splice(wrap).apply)
+                }
+              }
+            }
+          case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
+        }
       case Left(reason) if CaseClass.parse[A].toEither.isRight =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         deriveReaderBody[A](readerCtx) >> readerCtx.cache
@@ -543,7 +567,22 @@ trait BsonDocumentHandlerMacrosImpl
     Type[reactivemongo.api.bson.BSONWriter[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(writer)                                       => MIO.pure(writer)
+      case Right(writer)                                                         => MIO.pure(writer)
+      case Left(_) if !Type[A].isNamedTuple && Type[A].isInstanceOf[IsValueType] =>
+        Type[A] match {
+          case IsValueType(valueType) =>
+            import valueType.Underlying as Inner
+            resolveDirectionalWriter[Inner](writerCtx.nest[Inner]).map { innerWriter =>
+              val unwrap = directLambda[A, Inner](valueType.value.unwrap)
+              Expr.quote {
+                new reactivemongo.api.bson.BSONWriter[A] {
+                  def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] =
+                    Expr.splice(innerWriter).writeTry(Expr.splice(unwrap).apply(value))
+                }
+              }
+            }
+          case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
+        }
       case Left(reason) if CaseClass.parse[A].toEither.isRight =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]

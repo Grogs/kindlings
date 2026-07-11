@@ -97,6 +97,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         WithIgnoredField(1, visible = true, "test")
       )
     }
+
+    test("reader unwraps directional value types") {
+      val reader = KindlingsBsonDocumentReader.derived[WithValueType]
+      assertEquals(
+        reader.readDocument(BSONDocument("id" -> 42, "name" -> "test")).get,
+        WithValueType(WrapperId(42), "test")
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -180,6 +188,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         writer.writeTry(WithIgnoredField(1, visible = false, "test")).get,
         BSONDocument("id" -> 1, "name" -> "test")
+      )
+    }
+
+    test("writer unwraps directional value types") {
+      val writer = KindlingsBsonDocumentWriter.derived[WithValueType]
+      assertEquals(
+        writer.writeTry(WithValueType(WrapperId(42), "test")).get,
+        BSONDocument("id" -> 42, "name" -> "test")
       )
     }
   }
