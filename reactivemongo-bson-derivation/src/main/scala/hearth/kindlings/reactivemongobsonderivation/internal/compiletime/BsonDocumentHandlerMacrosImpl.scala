@@ -9,6 +9,8 @@ import hearth.std.*
 import hearth.kindlings.reactivemongobsonderivation.{
   BsonDocumentHandlerConfig,
   KindlingsBsonDocumentHandler,
+  KindlingsBsonDocumentReader,
+  KindlingsBsonDocumentWriter,
   TypeNaming
 }
 import reactivemongo.api.bson.BSONDocument
@@ -188,6 +190,217 @@ trait BsonDocumentHandlerMacrosImpl
   }
 
   // Entrypoints
+
+  /** Independent reader tracer bullet. Its context and cache contain no writer state. */
+  def deriveReaderTypeClass[A: Type](
+      configExpr: Expr[BsonDocumentHandlerConfig]
+  ): Expr[KindlingsBsonDocumentReader[A]] = {
+    implicit val ReaderA: Type[KindlingsBsonDocumentReader[A]] =
+      Type.Ctor1.of[KindlingsBsonDocumentReader][A]
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+
+    Log
+      .namedScope(s"Deriving BSONDocumentReader for ${Type[A].prettyPrint}") {
+        MIO.scoped { runSafe =>
+          val readerCtx = ReaderCtx.from[A](configExpr, configExpr.semiEval.toOption)
+          runSafe {
+            for {
+              _ <- ensureStandardExtensionsLoaded()
+              _ <- checkDerivationPolicyOncePerExpansion(Type[A].prettyPrint)
+              _ <- deriveReaderBody[A](readerCtx)
+              caller <- readerCtx.cache.get1Ary[BSONDocument, Try[A]]("cached-reader-body")
+              cache <- readerCtx.cache.get
+            } yield cache.toValDefs.use { _ =>
+              val call = caller.getOrElse(
+                Environment.reportErrorAndAbort(s"No reader body generated for ${Type[A].prettyPrint}")
+              )
+              Expr.quote {
+                hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                  .readerInstance[A]((document: BSONDocument) => Expr.splice(call(Expr.quote(document))))
+              }
+            }
+          }
+        }
+      }
+      .runToExprOrFail("KindlingsBsonDocumentReader.derived", timeout = derivationTimeout) { (_, errors) =>
+        s"Cannot derive BSON document reader for ${Type[A].prettyPrint}: ${errors.map(_.getMessage).mkString(", ")}"
+      }
+  }
+
+  private def deriveReaderBody[A: Type](readerCtx: ReaderCtx[A]): MIO[Unit] = {
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    val key = "cached-reader-body"
+    val builder = ValDefBuilder.ofDef1[BSONDocument, Try[A]](s"read_${Type[A].shortName}", "document")
+    for {
+      state <- readerCtx.cache.get
+      _ <-
+        if (builder.isBuilt(state, key)) MIO.pure(())
+        else
+          CaseClass.parse[A].toEither match {
+            case Left(reason)     => MIO.fail(new Exception(s"${Type[A].prettyPrint} is not a case class: $reason"))
+            case Right(caseClass) =>
+              val fields = caseClass.primaryConstructor.parameters.flatten.toList
+              readerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
+                runSafe(readerCtx.cache.buildCachedWith(key, builder) { case (_, document) =>
+                  runSafe {
+                    fields
+                      .parTraverse { case (name, parameter) =>
+                        import parameter.tpe.Underlying as Field
+                        implicit val FieldReaderT: Type[reactivemongo.api.bson.BSONReader[Field]] =
+                          Types.BsonReader[Field]
+                        Type[reactivemongo.api.bson.BSONReader[Field]]
+                          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+                          .toEither match {
+                          case Right(fieldReader) =>
+                            MIO.pure(name -> Expr.quote {
+                              Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr(name)).get).get
+                            }.as_??)
+                          case Left(reason) =>
+                            MIO.fail(
+                              BsonDocumentHandlerDerivationError.CannotDeriveField(Type[Field].prettyPrint, reason)
+                            )
+                        }
+                      }
+                      .map { values =>
+                        val construct = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                          onTypes = _ => Map.empty,
+                          onValues = _ => values.toList.toMap
+                        ) match {
+                          case Right(expr) => expr.value.asInstanceOf[Expr[A]]
+                          case Left(error) => Environment.reportErrorAndAbort(error)
+                        }
+                        Expr.quote(scala.util.Try(Expr.splice(construct)))
+                      }
+                  }
+                })
+              }
+          }
+    } yield ()
+  }
+
+  final case class ReaderCtx[A](
+      tpe: Type[A],
+      cache: MLocal[ValDefsCache],
+      config: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+  )
+
+  object ReaderCtx {
+    def from[A: Type](
+        config: Expr[BsonDocumentHandlerConfig],
+        evaluatedConfig: Option[BsonDocumentHandlerConfig]
+    ): ReaderCtx[A] = ReaderCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig)
+  }
+
+  /** Independent writer tracer bullet. Its context and cache contain no reader state. */
+  def deriveWriterTypeClass[A: Type](
+      configExpr: Expr[BsonDocumentHandlerConfig]
+  ): Expr[KindlingsBsonDocumentWriter[A]] = {
+    implicit val WriterA: Type[KindlingsBsonDocumentWriter[A]] =
+      Type.Ctor1.of[KindlingsBsonDocumentWriter][A]
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+
+    Log
+      .namedScope(s"Deriving BSONDocumentWriter for ${Type[A].prettyPrint}") {
+        MIO.scoped { runSafe =>
+          val writerCtx = WriterCtx.from[A](configExpr, configExpr.semiEval.toOption)
+          runSafe {
+            for {
+              _ <- ensureStandardExtensionsLoaded()
+              _ <- checkDerivationPolicyOncePerExpansion(Type[A].prettyPrint)
+              _ <- deriveWriterBody[A](writerCtx)
+              caller <- writerCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-writer-body")
+              cache <- writerCtx.cache.get
+            } yield cache.toValDefs.use { _ =>
+              val call = caller.getOrElse(
+                Environment.reportErrorAndAbort(s"No writer body generated for ${Type[A].prettyPrint}")
+              )
+              Expr.quote {
+                hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                  .writerInstance[A]((value: A) => Expr.splice(call(Expr.quote(value))))
+              }
+            }
+          }
+        }
+      }
+      .runToExprOrFail("KindlingsBsonDocumentWriter.derived", timeout = derivationTimeout) { (_, errors) =>
+        s"Cannot derive BSON document writer for ${Type[A].prettyPrint}: ${errors.map(_.getMessage).mkString(", ")}"
+      }
+  }
+
+  private def deriveWriterBody[A: Type](writerCtx: WriterCtx[A]): MIO[Unit] = {
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+    val key = "cached-writer-body"
+    val builder = ValDefBuilder.ofDef1[A, Try[BSONDocument]](s"write_${Type[A].shortName}", "value")
+    for {
+      state <- writerCtx.cache.get
+      _ <-
+        if (builder.isBuilt(state, key)) MIO.pure(())
+        else
+          CaseClass.parse[A].toEither match {
+            case Left(reason)     => MIO.fail(new Exception(s"${Type[A].prettyPrint} is not a case class: $reason"))
+            case Right(caseClass) =>
+              writerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
+                runSafe(writerCtx.cache.buildCachedWith(key, builder) { case (_, value) =>
+                  runSafe {
+                    val fieldValues = caseClass.caseFieldValuesAt(value).toList
+                    fieldValues
+                      .parTraverse { case (name, fieldValue) =>
+                        import fieldValue.Underlying as Field
+                        implicit val FieldWriterT: Type[reactivemongo.api.bson.BSONWriter[Field]] =
+                          Types.BsonWriter[Field]
+                        Type[reactivemongo.api.bson.BSONWriter[Field]]
+                          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+                          .toEither match {
+                          case Right(fieldWriter) =>
+                            MIO.pure(Expr.quote {
+                              Expr
+                                .splice(fieldWriter)
+                                .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
+                                .map(bson => reactivemongo.api.bson.BSONElement(Expr(name), bson))
+                            })
+                          case Left(reason) =>
+                            MIO.fail(
+                              BsonDocumentHandlerDerivationError.CannotDeriveField(Type[Field].prettyPrint, reason)
+                            )
+                        }
+                      }
+                      .map { elements =>
+                        val sequenced = elements.toList.foldRight(
+                          Expr.quote(
+                            scala.util.Success(List.empty[reactivemongo.api.bson.BSONElement]): Try[
+                              List[reactivemongo.api.bson.BSONElement]
+                            ]
+                          )
+                        ) { (next, tail) =>
+                          Expr.quote(for { head <- Expr.splice(next); rest <- Expr.splice(tail) } yield head :: rest)
+                        }
+                        Expr.quote(Expr.splice(sequenced).map(values => BSONDocument(values*)))
+                      }
+                  }
+                })
+              }
+          }
+    } yield ()
+  }
+
+  final case class WriterCtx[A](
+      tpe: Type[A],
+      cache: MLocal[ValDefsCache],
+      config: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+  )
+
+  object WriterCtx {
+    def from[A: Type](
+        config: Expr[BsonDocumentHandlerConfig],
+        evaluatedConfig: Option[BsonDocumentHandlerConfig]
+    ): WriterCtx[A] = WriterCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig)
+  }
 
   /** Inline write entry point. Structural handlers expose their write body as a cached named def, so this expansion
     * calls that def directly rather than allocating a `KindlingsBsonDocumentHandler`.

@@ -27,4 +27,14 @@ final private[reactivemongobsonderivation] class BsonDocumentHandlerMacros(val c
       config: c.Expr[BsonDocumentHandlerConfig]
   ): c.Expr[KindlingsBsonDocumentHandler[A]] =
     deriveTypeClass[A](config).asInstanceOf[c.Expr[KindlingsBsonDocumentHandler[A]]]
+
+  def deriveReaderTypeClassImpl[A: c.WeakTypeTag](
+      config: c.Expr[BsonDocumentHandlerConfig]
+  ): c.Expr[KindlingsBsonDocumentReader[A]] =
+    deriveReaderTypeClass[A](config).asInstanceOf[c.Expr[KindlingsBsonDocumentReader[A]]]
+
+  def deriveWriterTypeClassImpl[A: c.WeakTypeTag](
+      config: c.Expr[BsonDocumentHandlerConfig]
+  ): c.Expr[KindlingsBsonDocumentWriter[A]] =
+    deriveWriterTypeClass[A](config).asInstanceOf[c.Expr[KindlingsBsonDocumentWriter[A]]]
 }

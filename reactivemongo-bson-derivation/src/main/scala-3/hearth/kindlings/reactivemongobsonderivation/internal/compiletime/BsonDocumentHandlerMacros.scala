@@ -34,4 +34,18 @@ private[reactivemongobsonderivation] object BsonDocumentHandlerMacros {
       configExpr: Expr[hearth.kindlings.reactivemongobsonderivation.BsonDocumentHandlerConfig]
   ): Expr[hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler[A]] =
     new BsonDocumentHandlerMacros(q).deriveTypeClass[A](configExpr)
+
+  def deriveReaderTypeClassImpl[A: Type](using
+      q: Quotes
+  )(
+      configExpr: Expr[hearth.kindlings.reactivemongobsonderivation.BsonDocumentHandlerConfig]
+  ): Expr[hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentReader[A]] =
+    new BsonDocumentHandlerMacros(q).deriveReaderTypeClass[A](configExpr)
+
+  def deriveWriterTypeClassImpl[A: Type](using
+      q: Quotes
+  )(
+      configExpr: Expr[hearth.kindlings.reactivemongobsonderivation.BsonDocumentHandlerConfig]
+  ): Expr[hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentWriter[A]] =
+    new BsonDocumentHandlerMacros(q).deriveWriterTypeClass[A](configExpr)
 }
