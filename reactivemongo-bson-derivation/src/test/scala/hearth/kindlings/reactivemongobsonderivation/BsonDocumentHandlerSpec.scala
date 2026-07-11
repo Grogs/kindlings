@@ -44,6 +44,23 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         ReadEnvelope(NestedRead("ok"))
       )
     }
+
+    test("reader resolves Option and collection fields without writers") {
+      final case class ReadItem(value: String)
+      final case class ReadCollections(optional: Option[ReadItem], items: List[ReadItem])
+      implicit val itemReader: BSONReader[ReadItem] = BSONReader.from {
+        case BSONString(value) => scala.util.Success(ReadItem(value))
+        case other             => scala.util.Failure(new IllegalArgumentException(s"Expected BSONString, got $other"))
+      }
+
+      val reader = KindlingsBsonDocumentReader.derived[ReadCollections]
+      assertEquals(
+        reader
+          .readDocument(BSONDocument("optional" -> "one", "items" -> BSONArray("two", "three")))
+          .get,
+        ReadCollections(Some(ReadItem("one")), List(ReadItem("two"), ReadItem("three")))
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -78,6 +95,19 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         writer.writeTry(WriteEnvelope(NestedWrite("ok"))).get,
         BSONDocument("nested" -> BSONDocument("value" -> "ok"))
+      )
+    }
+
+    test("writer resolves Option and collection fields without readers") {
+      final case class WriteItem(value: String)
+      final case class WriteCollections(optional: Option[WriteItem], items: List[WriteItem])
+      implicit val itemWriter: BSONWriter[WriteItem] =
+        BSONWriter.from(item => scala.util.Success(BSONString(item.value)))
+
+      val writer = KindlingsBsonDocumentWriter.derived[WriteCollections]
+      assertEquals(
+        writer.writeTry(WriteCollections(Some(WriteItem("one")), List(WriteItem("two"), WriteItem("three")))).get,
+        BSONDocument("optional" -> "one", "items" -> BSONArray("two", "three"))
       )
     }
   }
