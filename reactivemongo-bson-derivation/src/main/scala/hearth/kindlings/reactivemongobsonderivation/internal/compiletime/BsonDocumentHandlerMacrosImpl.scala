@@ -555,22 +555,38 @@ trait BsonDocumentHandlerMacrosImpl
       implicit val ParentHandlerA: Type[reactivemongo.api.bson.BSONDocumentHandler[A]] =
         Types.ExternalBsonDocumentHandler[A]
       Log.info(s"Attempting to summon implicit BSONDocumentHandler[${Type[A].prettyPrint}]") >> {
-        Type[reactivemongo.api.bson.BSONDocumentHandler[A]]
-          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-          .toEither match {
-          case Right(parent) =>
-            val instance = Expr.quote {
-              hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-                .handlerInstance[A](
-                  (document: BSONDocument) => Expr.splice(parent).readDocument(document),
-                  (value: A) => Expr.splice(parent).writeTry(value)
-                )
-            }
-            Log.info(s"Found implicit BSONDocumentHandler[${Type[A].prettyPrint}]") >>
-              ctx.setInstance[A](instance) >> MIO.pure(Rule.matched(instance))
-          case Left(reason) =>
-            MIO.pure(Rule.yielded(s"No implicit BSONDocumentHandler found: $reason"))
-        }
+        // A Scala 3 `derives KindlingsBsonDocumentHandler` expansion puts its generated
+        // Kindlings handler in implicit scope. Since that handler is a BSONDocumentHandler
+        // subtype, the parent search would find it while it is being initialized and generate
+        // an infinite self-call. A plain external BSONDocumentHandler remains valid at the
+        // root, so only skip parent lookup when a Kindlings handler is already in scope.
+        val rootHasKindlingsHandler =
+          ctx.derivedType.exists(_.Underlying =:= Type[A]) &&
+            Type[KindlingsBsonDocumentHandler[A]]
+              .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+              .toOption
+              .nonEmpty
+        if (rootHasKindlingsHandler)
+          MIO.pure(
+            Rule.yielded(s"The type ${Type[A].prettyPrint} is the type being derived, skipping implicit search")
+          )
+        else
+          Type[reactivemongo.api.bson.BSONDocumentHandler[A]]
+            .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+            .toEither match {
+            case Right(parent) =>
+              val instance = Expr.quote {
+                hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                  .handlerInstance[A](
+                    (document: BSONDocument) => Expr.splice(parent).readDocument(document),
+                    (value: A) => Expr.splice(parent).writeTry(value)
+                  )
+              }
+              Log.info(s"Found implicit BSONDocumentHandler[${Type[A].prettyPrint}]") >>
+                ctx.setInstance[A](instance) >> MIO.pure(Rule.matched(instance))
+            case Left(reason) =>
+              MIO.pure(Rule.yielded(s"No implicit BSONDocumentHandler found: $reason"))
+          }
       }
     }
   }
