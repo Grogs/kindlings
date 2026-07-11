@@ -61,6 +61,18 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         ReadCollections(Some(ReadItem("one")), List(ReadItem("two"), ReadItem("three")))
       )
     }
+
+    test("reader requires only KeyReader for map keys") {
+      final case class ReadKey(value: Int)
+      final case class ReadMap(values: Map[ReadKey, String])
+      implicit val keyReader: KeyReader[ReadKey] = KeyReader(key => ReadKey(key.stripPrefix("id-").toInt))
+
+      val reader = KindlingsBsonDocumentReader.derived[ReadMap]
+      assertEquals(
+        reader.readDocument(BSONDocument("values" -> BSONDocument("id-1" -> "one"))).get,
+        ReadMap(Map(ReadKey(1) -> "one"))
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -108,6 +120,18 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         writer.writeTry(WriteCollections(Some(WriteItem("one")), List(WriteItem("two"), WriteItem("three")))).get,
         BSONDocument("optional" -> "one", "items" -> BSONArray("two", "three"))
+      )
+    }
+
+    test("writer requires only KeyWriter for map keys") {
+      final case class WriteKey(value: Int)
+      final case class WriteMap(values: Map[WriteKey, String])
+      implicit val keyWriter: KeyWriter[WriteKey] = KeyWriter(key => s"id-${key.value}")
+
+      val writer = KindlingsBsonDocumentWriter.derived[WriteMap]
+      assertEquals(
+        writer.writeTry(WriteMap(Map(WriteKey(1) -> "one"))).get,
+        BSONDocument("values" -> BSONDocument("id-1" -> "one"))
       )
     }
   }
