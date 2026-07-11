@@ -49,6 +49,53 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       val writer = KindlingsBsonDocumentWriter.derived[Map[WriterKey, Int]]
       assertEquals(writer.writeTry(Map(WriterKey(1) -> 2)).get, BSONDocument("1" -> 2))
     }
+
+    test("reader derivation uses @Reader without requiring @Writer") {
+      final case class Secret(value: String)
+      val secretReader: BSONReader[Secret] = BSONReader.from {
+        case BSONString(value) => scala.util.Success(Secret(value))
+        case other             => scala.util.Failure(new IllegalArgumentException(s"Expected BSONString, got $other"))
+      }
+      final case class Request(
+          @annotations.Reader[Secret](secretReader) secret: Secret
+      )
+
+      val reader = KindlingsBsonDocumentReader.derived[Request]
+      assertEquals(reader.readDocument(BSONDocument("secret" -> "token")).get, Request(Secret("token")))
+    }
+
+    test("writer derivation uses @Writer without requiring @Reader") {
+      final case class Secret(value: String)
+      val secretWriter: BSONWriter[Secret] = BSONWriter.from(secret => scala.util.Success(BSONString(secret.value)))
+      final case class Request(
+          @annotations.Writer[Secret](secretWriter) secret: Secret
+      )
+
+      val writer = KindlingsBsonDocumentWriter.derived[Request]
+      assertEquals(writer.writeTry(Request(Secret("token"))).get, BSONDocument("secret" -> "token"))
+    }
+
+    test("flattened reader accepts a standalone BSONDocumentReader") {
+      final case class Nested(value: String)
+      final case class Request(@annotations.Flatten nested: Nested)
+      implicit val nestedReader: BSONDocumentReader[Nested] = BSONDocumentReader.from { document =>
+        document.getAsTry[String]("nestedValue").map(Nested.apply)
+      }
+
+      val reader = KindlingsBsonDocumentReader.derived[Request]
+      assertEquals(reader.readDocument(BSONDocument("nestedValue" -> "token")).get, Request(Nested("token")))
+    }
+
+    test("flattened writer accepts a standalone BSONDocumentWriter") {
+      final case class Nested(value: String)
+      final case class Request(@annotations.Flatten nested: Nested)
+      implicit val nestedWriter: BSONDocumentWriter[Nested] = BSONDocumentWriter.from { nested =>
+        scala.util.Success(BSONDocument("nestedValue" -> nested.value))
+      }
+
+      val writer = KindlingsBsonDocumentWriter.derived[Request]
+      assertEquals(writer.writeTry(Request(Nested("token"))).get, BSONDocument("nestedValue" -> "token"))
+    }
   }
 
   group("KindlingsBsonDocumentHandler") {
