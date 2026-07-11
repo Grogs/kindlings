@@ -166,6 +166,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         BSONDocument("id" -> "a", "name" -> "b")
       )
     }
+
+    test("writer omits @Ignore fields before codec resolution") {
+      val writer = KindlingsBsonDocumentWriter.derived[WithIgnoredField]
+      assertEquals(
+        writer.writeTry(WithIgnoredField(1, visible = false, "test")).get,
+        BSONDocument("id" -> 1, "name" -> "test")
+      )
+    }
   }
 
   group("KindlingsBsonDocumentHandler") {

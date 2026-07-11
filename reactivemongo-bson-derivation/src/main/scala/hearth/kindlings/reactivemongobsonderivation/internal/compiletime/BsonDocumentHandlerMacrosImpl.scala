@@ -437,11 +437,17 @@ trait BsonDocumentHandlerMacrosImpl
               writerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
                 runSafe(writerCtx.cache.buildCachedWith(key, builder) { case (_, value) =>
                   runSafe {
-                    val fieldValues = caseClass.caseFieldValuesAt(value).toList
+                    implicit val IgnoreT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
+                      Types.ignoreAnn
+                    val parameters = caseClass.primaryConstructor.parameters.flatten.toList
+                    val fieldValues = caseClass.caseFieldValuesAt(value).toList.filterNot { case (name, _) =>
+                      val parameter = parameters.find(_._1 == name).get._2
+                      hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter)
+                    }
                     fieldValues
                       .parTraverse { case (name, fieldValue) =>
                         import fieldValue.Underlying as Field
-                        val parameter = caseClass.primaryConstructor.parameters.flatten.toList.find(_._1 == name).get._2
+                        val parameter = parameters.find(_._1 == name).get._2
                         val key = resolveDirectionalFieldKey(
                           name,
                           parameter,
