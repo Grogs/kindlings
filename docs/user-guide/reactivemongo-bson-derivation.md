@@ -63,6 +63,7 @@ It uses the same implicit `BsonDocumentHandlerConfig` and honors an existing `BS
 | Sealed traits and Scala 3 enums | Uses a BSON discriminator |
 | `Option[A]` | Missing fields and `BSONNull` decode as `None` |
 | `AnyVal` value classes | Encoded as their underlying value |
+| Scala 3 named tuples | Including single-element named tuples; field labels become BSON keys |
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array`, and standard supported collection types |
 | Maps | `Map[K, V]`; non-`String` keys need both `KeyReader[K]` and `KeyWriter[K]` |
 | Existing BSON codecs | User-provided `BSONReader[A]` and `BSONWriter[A]` take precedence |
@@ -198,6 +199,78 @@ implicit val userIdWriter: KeyWriter[UserId] = KeyWriter(_.value)
 
 Derivation fails if either codec is absent; this prevents asymmetric read/write handlers.
 
+## Comparison with ReactiveMongo BSON macros
+
+Both implementations produce standard ReactiveMongo BSON type classes and support naming configuration, non-string
+map keys, and field annotations. Kindlings' main difference is that one root declaration recursively derives more of
+the model graph:
+
+```scala
+val handler = KindlingsBsonDocumentHandler.derived[Root]
+```
+
+### Feature differences
+
+| Feature | ReactiveMongo BSON macros | Kindlings |
+|---|---|---|
+| Nested case classes | Child handlers or automatic-materialization configuration may be required | Derived recursively from the root |
+| Sealed and recursive ADTs | Per-subtype handlers and `UnionType` plumbing may be required | Derived recursively from one root declaration |
+| `AnyVal` fields | A separate `Macros.valueHandler` is required | Unwrapped automatically while deriving the parent |
+| Scala constructor defaults | Requires `MacroOptions.ReadDefaultValues` | Honored automatically for missing fields |
+| Nested `@Flatten` fields | Child document handlers must be materialized | Flattened children derive recursively from the root |
+| Scala 3 derivation syntax | `Macros.handler[A]` | Also supports `derives KindlingsBsonDocumentHandler` |
+| Scala 3 named tuples | Handler derivation is not supported | Supported, including single-element named tuples |
+| One-off serialization | Materialize a writer or handler | `KindlingsBsonDocumentHandler.write(value)` emits only the write path |
+| Naming, map keys, and field annotations | Supported | Supported |
+
+### Less handler plumbing
+
+Value-class fields are handled inline. Given:
+
+```scala
+final class UserId(val value: Int) extends AnyVal
+final case class User(id: UserId, name: String)
+```
+
+Kindlings needs only the enclosing handler:
+
+```scala
+val userHandler = KindlingsBsonDocumentHandler.derived[User]
+// User(UserId(42), "Alice") -> BSONDocument("id" -> 42, "name" -> "Alice")
+```
+
+With ReactiveMongo's macros, deriving `User` directly reports that no `BSONWriter[UserId]` exists; a separate
+`Macros.valueHandler[UserId]` must first be placed in implicit scope.
+
+The same root-only behavior applies to nested flattening:
+
+```scala
+case class Coordinates(x: Int, y: Int)
+case class Address(city: String, @Flatten coordinates: Coordinates)
+case class Person(name: String, @Flatten address: Address)
+
+val personHandler = KindlingsBsonDocumentHandler.derived[Person]
+// BSONDocument("name" -> "Alice", "city" -> "Paris", "x" -> 1, "y" -> 2)
+```
+
+Kindlings recursively derives both flattened children. ReactiveMongo can produce the same BSON representation, but
+requires their document handlers to be materialized separately.
+
+### Defaults without a second switch
+
+For a model such as:
+
+```scala
+case class Account(id: Int, retries: Int = 3)
+```
+
+an ordinary Kindlings handler reads `BSONDocument("id" -> 1)` as `Account(1, 3)`. ReactiveMongo's macros support the
+same constructor default only when derivation opts into `MacroOptions.ReadDefaultValues`. Kindlings treats the Scala
+default as the model's missing-field behavior without requiring every derivation site to repeat that policy.
+
+These are developer-experience and maintenance differences, not runtime-performance claims. ReactiveMongo offers many
+of the same underlying mechanisms; Kindlings reduces the declarations and configuration needed to compose them.
+
 ## Migrating from ReactiveMongo macros
 
 The derived handler is compatible with ReactiveMongo APIs because it is a `BSONDocumentHandler[A]`. The derivation entry point and configuration are Kindlings APIs:
@@ -217,7 +290,9 @@ Check existing BSON round-trip tests when migrating, especially for custom field
 
 - JVM only.
 - Derives combined document handlers; it does not provide legacy standalone `Macros.reader` or `Macros.writer` entry points.
-- Non-sealed legacy `UnionType` ADTs are not supported. Use a sealed hierarchy or write a manual handler.
+- Non-sealed legacy `UnionType` ADTs are not supported. Prefer a sealed protocol sub-hierarchy, even when the broader
+  domain parent must remain open, or write a manual handler. For example, `sealed trait ExternalEvent extends Event`
+  can contain only the event variants admitted by the BSON protocol while `Event` remains extensible.
 - A flattened field's BSON key collisions are not detected at compile time.
 - Regular non-case classes require a manual `BSONDocumentHandler`.
 

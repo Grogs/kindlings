@@ -5,6 +5,16 @@ import reactivemongo.api.bson.BSONDocument
 
 final case class DerivesPerson(name: String, age: Int) derives KindlingsBsonDocumentHandler
 
+object OpaqueBsonTypes {
+  opaque type UserId = Int
+
+  object UserId {
+    def apply(value: Int): UserId = value
+  }
+
+  final case class User(id: UserId, name: String)
+}
+
 final class BsonDocumentHandlerScala3Spec extends MacroSuite {
 
   group("Scala 3 derives") {
@@ -13,6 +23,20 @@ final class BsonDocumentHandlerScala3Spec extends MacroSuite {
       val value = DerivesPerson("Alice", 30)
       val document = BSONDocument("name" -> "Alice", "age" -> 30)
       val handler = summon[KindlingsBsonDocumentHandler[DerivesPerson]]
+
+      assertEquals(handler.writeTry(value).get, document)
+      assertEquals(handler.readDocument(document).get, value)
+    }
+  }
+
+  group("opaque aliases") {
+
+    test("opaque field round-trip through its underlying value") {
+      import OpaqueBsonTypes.*
+
+      val handler = KindlingsBsonDocumentHandler.derived[User]
+      val value = User(UserId(42), "Alice")
+      val document = BSONDocument("id" -> 42, "name" -> "Alice")
 
       assertEquals(handler.writeTry(value).get, document)
       assertEquals(handler.readDocument(document).get, value)

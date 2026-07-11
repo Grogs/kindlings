@@ -574,6 +574,53 @@ To prevent infinite macro expansion, the kindlings macro filters out its own `de
 
 ---
 
+## reactivemongo-bson-derivation
+
+**Replaces:** `reactivemongo.api.bson.Macros` derivation while returning standard ReactiveMongo
+`BSONDocumentHandler` instances. JVM only because the upstream BSON API is JVM only.
+
+### Type and derivation support
+
+| Feature | ReactiveMongo BSON macros | Kindlings | Status |
+|---|---|---|---|
+| Case classes and nested products | Yes; nested handlers may need separate materialization | Yes; recursive root derivation | Improvement |
+| Sealed and recursive ADTs | Yes; may require subtype handlers and `MacroOptions.UnionType` | Yes; one root declaration | Improvement |
+| Scala 3 enums | Yes | Yes | Parity |
+| Scala 3 named tuples | No | Yes, including single-element named tuples | Improvement |
+| `AnyVal` codecs | Dedicated `Macros.valueReader` / `valueWriter` / `valueHandler` | Automatically unwrapped within enclosing derivation | Improvement |
+| Opaque-alias fields | Dedicated `Macros.valueReader` / `valueWriter` / `valueHandler` APIs | Automatically unwrapped within enclosing derivation | Improvement |
+| Collections and maps | Yes | Yes | Parity |
+| Non-string map keys | `KeyReader` / `KeyWriter`; BSON document field names | Same upstream type classes and wire representation | Parity |
+| Existing user BSON codecs take precedence | Yes | Yes | Parity |
+
+### Configuration and annotations
+
+| Feature | ReactiveMongo BSON macros | Kindlings | Status |
+|---|---|---|---|
+| Field naming | Yes | Yes | Parity |
+| Type naming and discriminator field | Yes | Yes | Parity |
+| Per-field rename, ignore, `NoneAsNull` | Yes | Yes | Parity |
+| `Reader`, `Writer`, `DefaultValue`, `Flatten` | Yes | Yes | Parity |
+| Scala constructor defaults | Requires `MacroOptions.ReadDefaultValues` | Applied automatically when a field is absent | Improvement |
+| Nested flattening from a root declaration | Requires separately materialized child document handlers | Child handlers derive recursively | Improvement |
+
+### API and composition
+
+| Feature | ReactiveMongo BSON macros | Kindlings | Status |
+|---|---|---|---|
+| Standard ReactiveMongo interoperability | Native `BSONDocumentHandler` | `KindlingsBsonDocumentHandler` extends it | Parity |
+| Scala 3 `derives` | No derivable type-class companion | `derives KindlingsBsonDocumentHandler` | Improvement |
+| One-off write-only expansion | Materialize a writer or handler | `KindlingsBsonDocumentHandler.write(value)` | Improvement |
+| Standalone document reader/writer derivation | `Macros.reader` and `Macros.writer` | Combined document handler only | Gap |
+| Legacy non-sealed `UnionType` ADTs | Supported | Not supported | Gap |
+
+The central improvement is reduced handler plumbing. For example, deriving a parent containing an `AnyVal`, or a root
+with multiple nested `@Flatten` fields, recursively generates the required code in Kindlings. The reference macros can
+produce equivalent BSON but require the relevant child/value handlers in implicit scope. These are setup and
+maintenance improvements; no ReactiveMongo runtime-performance comparison is claimed without dedicated benchmarks.
+
+---
+
 ## scalacheck-derivation
 
 **Replaces:** manual `Arbitrary` instance writing, [`scalacheck-shapeless`](https://github.com/alexarchambault/scalacheck-shapeless) (Scala 2 only, Shapeless-based; cross-publishes JVM/JS/Native on Scala 2)
