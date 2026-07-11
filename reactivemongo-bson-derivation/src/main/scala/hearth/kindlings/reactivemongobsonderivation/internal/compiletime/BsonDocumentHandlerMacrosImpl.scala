@@ -119,6 +119,24 @@ trait BsonDocumentHandlerMacrosImpl
     }
   }
 
+  private def resolveDirectionalFieldKey(
+      fieldName: String,
+      param: Parameter,
+      config: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+  ): Expr[String] = {
+    implicit val FieldNameT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName] =
+      Types.fieldNameAnn
+    getAnnotationStringArg[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName](param) match {
+      case Some(name) => Expr(name)
+      case None       =>
+        evaluatedConfig match {
+          case Some(value) => Expr(value.fieldNameMapper(fieldName))
+          case None        => Expr.quote(Expr.splice(config).fieldNameMapper(Expr(fieldName)))
+        }
+    }
+  }
+
   /** Try to extract the underlying String from an Expr[String] if it's a literal. */
   protected def extractStringLiteral(expr: Expr[String]): Option[String] = expr.value
 
@@ -269,9 +287,15 @@ trait BsonDocumentHandlerMacrosImpl
                     fields
                       .parTraverse { case (name, parameter) =>
                         import parameter.tpe.Underlying as Field
+                        val key = resolveDirectionalFieldKey(
+                          name,
+                          parameter,
+                          readerCtx.config,
+                          readerCtx.evaluatedConfig
+                        )
                         resolveDirectionalReader[Field](readerCtx.nest[Field]).map { fieldReader =>
                           name -> Expr.quote {
-                            Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr(name)).get).get
+                            Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
                           }.as_??
                         }
                       }
@@ -415,12 +439,19 @@ trait BsonDocumentHandlerMacrosImpl
                     fieldValues
                       .parTraverse { case (name, fieldValue) =>
                         import fieldValue.Underlying as Field
+                        val parameter = caseClass.primaryConstructor.parameters.flatten.toList.find(_._1 == name).get._2
+                        val key = resolveDirectionalFieldKey(
+                          name,
+                          parameter,
+                          writerCtx.config,
+                          writerCtx.evaluatedConfig
+                        )
                         resolveDirectionalWriter[Field](writerCtx.nest[Field]).map { fieldWriter =>
                           Expr.quote {
                             Expr
                               .splice(fieldWriter)
                               .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
-                              .map(bson => reactivemongo.api.bson.BSONElement(Expr(name), bson))
+                              .map(bson => reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
                           }
                         }
                       }

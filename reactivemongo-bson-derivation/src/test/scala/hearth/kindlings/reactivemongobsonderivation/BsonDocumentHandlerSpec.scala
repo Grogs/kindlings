@@ -73,6 +73,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         ReadMap(Map(ReadKey(1) -> "one"))
       )
     }
+
+    test("reader applies directional field names") {
+      val reader = KindlingsBsonDocumentReader.derived[AnnotatedFields]
+      assertEquals(
+        reader.readDocument(BSONDocument("first_name" -> "Alice", "years_old" -> 30)).get,
+        AnnotatedFields("Alice", 30)
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -132,6 +140,14 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         writer.writeTry(WriteMap(Map(WriteKey(1) -> "one"))).get,
         BSONDocument("values" -> BSONDocument("id-1" -> "one"))
+      )
+    }
+
+    test("writer applies directional field names") {
+      val writer = KindlingsBsonDocumentWriter.derived[AnnotatedFields]
+      assertEquals(
+        writer.writeTry(AnnotatedFields("Alice", 30)).get,
+        BSONDocument("first_name" -> "Alice", "years_old" -> 30)
       )
     }
   }
