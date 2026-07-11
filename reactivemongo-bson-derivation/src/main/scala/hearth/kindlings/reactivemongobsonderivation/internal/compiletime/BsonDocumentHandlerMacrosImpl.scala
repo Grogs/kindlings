@@ -79,9 +79,11 @@ trait BsonDocumentHandlerMacrosImpl
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore]
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
-      Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
-        case method if method.isImplicit => method.asUntyped
-      }
+      Seq(
+        Type.of[KindlingsBsonDocumentHandler.type],
+        Type.of[KindlingsBsonDocumentReader.type],
+        Type.of[KindlingsBsonDocumentWriter.type]
+      ).flatMap(_.methods.collect { case method if method.isImplicit => method.asUntyped })
   }
 
   // Field name resolution
@@ -200,6 +202,25 @@ trait BsonDocumentHandlerMacrosImpl
     implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
 
+    implicit val ParentReaderA: Type[reactivemongo.api.bson.BSONDocumentReader[A]] =
+      Types.ExternalBsonDocumentReader[A]
+    Type[reactivemongo.api.bson.BSONDocumentReader[A]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toEither match {
+      case Right(parent) =>
+        Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+            .readerInstance[A]((document: BSONDocument) => Expr.splice(parent).readDocument(document))
+        }
+      case Left(_) => deriveReaderStructurally[A](configExpr)
+    }
+  }
+
+  private def deriveReaderStructurally[A: Type](
+      configExpr: Expr[BsonDocumentHandlerConfig]
+  ): Expr[KindlingsBsonDocumentReader[A]] = {
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
     Log
       .namedScope(s"Deriving BSONDocumentReader for ${Type[A].prettyPrint}") {
         MIO.scoped { runSafe =>
@@ -303,6 +324,25 @@ trait BsonDocumentHandlerMacrosImpl
     implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
 
+    implicit val ParentWriterA: Type[reactivemongo.api.bson.BSONDocumentWriter[A]] =
+      Types.ExternalBsonDocumentWriter[A]
+    Type[reactivemongo.api.bson.BSONDocumentWriter[A]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toEither match {
+      case Right(parent) =>
+        Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+            .writerInstance[A]((value: A) => Expr.splice(parent).writeTry(value))
+        }
+      case Left(_) => deriveWriterStructurally[A](configExpr)
+    }
+  }
+
+  private def deriveWriterStructurally[A: Type](
+      configExpr: Expr[BsonDocumentHandlerConfig]
+  ): Expr[KindlingsBsonDocumentWriter[A]] = {
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
     Log
       .namedScope(s"Deriving BSONDocumentWriter for ${Type[A].prettyPrint}") {
         MIO.scoped { runSafe =>

@@ -22,6 +22,17 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       val reader: BSONDocumentReader[ReadRequest] = KindlingsBsonDocumentReader.derived[ReadRequest]
       assertEquals(reader.readDocument(BSONDocument("secret" -> "token")).get, ReadRequest(ReadOnlySecret("token")))
     }
+
+    test("root BSONDocumentReader overrides structural derivation") {
+      final case class RootRead(value: String)
+      implicit val rootReader: BSONDocumentReader[RootRead] =
+        BSONDocumentReader.from(_ => scala.util.Success(RootRead("from-root-reader")))
+
+      assertEquals(
+        KindlingsBsonDocumentReader.derived[RootRead].readDocument(BSONDocument.empty).get,
+        RootRead("from-root-reader")
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -35,6 +46,17 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
 
       val writer: BSONDocumentWriter[WriteRequest] = KindlingsBsonDocumentWriter.derived[WriteRequest]
       assertEquals(writer.writeTry(WriteRequest(WriteOnlySecret("token"))).get, BSONDocument("secret" -> "token"))
+    }
+
+    test("root BSONDocumentWriter overrides structural derivation") {
+      final case class RootWrite(value: String)
+      implicit val rootWriter: BSONDocumentWriter[RootWrite] =
+        BSONDocumentWriter.from(_ => scala.util.Success(BSONDocument("source" -> "root-writer")))
+
+      assertEquals(
+        KindlingsBsonDocumentWriter.derived[RootWrite].writeTry(RootWrite("ignored")).get,
+        BSONDocument("source" -> "root-writer")
+      )
     }
   }
 
