@@ -133,7 +133,7 @@ trait BsonCollectionDerivation {
       implicit val TryBsonDocumentT: Type[scala.util.Try[BSONDocument]] = Types.TryCtor[BSONDocument]
 
       import isMap.{Key, Value, CtorResult}
-      ensureMapKeyCodecsOf[A, Pair](isMap)
+      ensureMapKeyCodecsOf[A, Pair](isMap, reads = !ctx.writeOnly, writes = !ctx.readOnly)
       val factoryExpr = isMap.factory
       val buildStep = isMap.build
 

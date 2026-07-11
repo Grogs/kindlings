@@ -33,6 +33,22 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       val writer: BSONDocumentWriter[WriteRequest] = KindlingsBsonDocumentWriter.derived[WriteRequest]
       assertEquals(writer.writeTry(WriteRequest(WriteOnlySecret("token"))).get, BSONDocument("secret" -> "token"))
     }
+
+    test("reader map derivation requires only KeyReader") {
+      final case class ReaderKey(value: Int)
+      implicit val keyReader: KeyReader[ReaderKey] = KeyReader(value => ReaderKey(value.toInt))
+
+      val reader = KindlingsBsonDocumentReader.derived[Map[ReaderKey, Int]]
+      assertEquals(reader.readDocument(BSONDocument("1" -> 2)).get, Map(ReaderKey(1) -> 2))
+    }
+
+    test("writer map derivation requires only KeyWriter") {
+      final case class WriterKey(value: Int)
+      implicit val keyWriter: KeyWriter[WriterKey] = KeyWriter(key => key.value.toString)
+
+      val writer = KindlingsBsonDocumentWriter.derived[Map[WriterKey, Int]]
+      assertEquals(writer.writeTry(Map(WriterKey(1) -> 2)).get, BSONDocument("1" -> 2))
+    }
   }
 
   group("KindlingsBsonDocumentHandler") {

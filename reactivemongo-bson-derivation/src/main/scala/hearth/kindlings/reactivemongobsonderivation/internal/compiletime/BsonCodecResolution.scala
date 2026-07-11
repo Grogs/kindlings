@@ -10,14 +10,18 @@ import scala.util.Try
 trait BsonCodecResolution {
   this: BsonDocumentHandlerMacrosImpl & MacroCommons & StdExtensions & AnnotationSupport =>
 
-  protected def ensureMapKeyCodecs[A: Type](): Unit = Type[A] match {
+  protected def ensureMapKeyCodecs[A: Type](reads: Boolean, writes: Boolean): Unit = Type[A] match {
     case IsMap(isMap) =>
       import isMap.Underlying as Pair
-      ensureMapKeyCodecsOf[A, Pair](isMap.value)
+      ensureMapKeyCodecsOf[A, Pair](isMap.value, reads, writes)
     case _ => ()
   }
 
-  protected def ensureMapKeyCodecsOf[A: Type, Pair: Type](isMap: IsMapOf[A, Pair]): Unit = {
+  protected def ensureMapKeyCodecsOf[A: Type, Pair: Type](
+      isMap: IsMapOf[A, Pair],
+      reads: Boolean,
+      writes: Boolean
+  ): Unit = {
     import isMap.Key
     implicit val StringT: Type[String] = Types.String
     implicit val KeyReaderT: Type[reactivemongo.api.bson.KeyReader[Key]] = Types.KeyReader[Key]
@@ -30,16 +34,17 @@ trait BsonCodecResolution {
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toOption
       .nonEmpty
-    if (!(Type[Key] =:= Type[String]) && !(hasKeyReader && hasKeyWriter)) {
+    val missing =
+      if (reads && writes && !(hasKeyReader && hasKeyWriter)) Some("both KeyReader and KeyWriter")
+      else if (reads && !hasKeyReader) Some("KeyReader")
+      else if (writes && !hasKeyWriter) Some("KeyWriter")
+      else None
+    if (!(Type[Key] =:= Type[String]) && missing.nonEmpty)
       Environment.reportErrorAndAbort(
         BsonDocumentHandlerDerivationError
-          .CannotDeriveCollection(
-            Type[A].prettyPrint,
-            s"Map key ${Type[Key].prettyPrint} requires both KeyReader and KeyWriter"
-          )
+          .CannotDeriveCollection(Type[A].prettyPrint, s"Map key ${Type[Key].prettyPrint} requires ${missing.get}")
           .message
       )
-    }
   }
 
   def resolveBsonReader[A: Type](fieldCtx: DerivationCtx[A]): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
@@ -51,7 +56,7 @@ trait BsonCodecResolution {
             scala.util.Failure(new UnsupportedOperationException("inactive reader"))
         }
       })
-    ensureMapKeyCodecs[A]()
+    ensureMapKeyCodecs[A](reads = true, writes = !fieldCtx.readOnly)
     @scala.annotation.nowarn("msg=is never used")
     implicit val TryAT: Type[scala.util.Try[A]] = Types.TryCtor[A]
     @scala.annotation.nowarn("msg=is never used")
@@ -194,7 +199,7 @@ trait BsonCodecResolution {
             scala.util.Failure(new UnsupportedOperationException("inactive writer"))
         }
       })
-    ensureMapKeyCodecs[A]()
+    ensureMapKeyCodecs[A](reads = !fieldCtx.writeOnly, writes = true)
     implicit val BsonDocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryBsonDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
     @scala.annotation.nowarn("msg=is never used")
