@@ -63,6 +63,23 @@ path rather than creating a document handler.”
 Avoid stronger performance comparisons (for example, “faster”) without a benchmark against the same ReactiveMongo
 version and workload.
 
+### Standalone reader and writer derivation
+
+Kindlings now exposes independent document-codec entry points:
+
+```scala
+KindlingsBsonDocumentReader.derived[A]
+KindlingsBsonDocumentWriter.derived[A]
+```
+
+They are assignable to ReactiveMongo's `BSONDocumentReader[A]` and `BSONDocumentWriter[A]`, respectively. The reader
+path does not summon or validate writers, and the writer path does not summon or validate readers. A combined handler
+composes both directional derivations and aggregates independent diagnostics.
+
+This is feature parity with the reference's `Macros.reader` and `Macros.writer`, rather than a performance claim. The
+useful Kindlings-specific guarantee to document is directional independence: a read-only model can use a nested
+`BSONReader` with no corresponding writer, and conversely for a write-only model.
+
 ## Named tuples: a verified Kindlings advantage
 
 Kindlings has Scala 3 regression tests for single- and multi-element named tuples. A temporary, isolated checkout of
@@ -178,6 +195,9 @@ Add a concise “Why Kindlings?” callout to the ReactiveMongo BSON user guide.
 3. Scala constructor defaults work without an opt-in macro option;
 4. Scala 3 supports `derives` and named tuples; and
 5. one-off serialization can emit only the write path.
+
+Document standalone reader and writer derivation as API parity, with the directional-independence guarantee, rather
+than as a comparative performance advantage.
 
 Keep the migration table factual, and avoid implying advantages for map-key encoding, naming configuration, or the
 mere availability of field annotations, where the implementations are at parity.

@@ -4,6 +4,16 @@ Drop-in replacement for ReactiveMongo BSON macros — derives standard `BSONDocu
 
 Derived `KindlingsBsonDocumentHandler[A]` instances extend ReactiveMongo's `BSONDocumentHandler[A]`, so they can be passed anywhere a `BSONDocumentHandler`, `BSONDocumentReader`, `BSONDocumentWriter`, `BSONReader`, or `BSONWriter` is required.
 
+When an application needs only one document direction, derive that direction directly:
+
+```scala
+val reader: BSONDocumentReader[Person] = KindlingsBsonDocumentReader.derived[Person]
+val writer: BSONDocumentWriter[Person] = KindlingsBsonDocumentWriter.derived[Person]
+```
+
+The reader derives and requires only read capabilities; the writer derives and requires only write capabilities. A
+combined `KindlingsBsonDocumentHandler` derives both directions and reports failures from both sides together.
+
 ## Installation
 
 !!! example "sbt"
@@ -65,8 +75,8 @@ It uses the same implicit `BsonDocumentHandlerConfig` and honors an existing `BS
 | `AnyVal` value classes | Encoded as their underlying value |
 | Scala 3 named tuples | Including single-element named tuples; field labels become BSON keys |
 | Collections | `List`, `Seq`, `Vector`, `Set`, `Array`, and standard supported collection types |
-| Maps | `Map[K, V]`; non-`String` keys need both `KeyReader[K]` and `KeyWriter[K]` |
-| Existing BSON codecs | User-provided `BSONReader[A]` and `BSONWriter[A]` take precedence |
+| Maps | `Map[K, V]`; non-`String` keys need `KeyReader[K]` to read and `KeyWriter[K]` to write |
+| Existing BSON codecs | User-provided `BSONReader[A]` and `BSONWriter[A]` take precedence in their respective directions |
 
 ## Configuration
 
@@ -187,7 +197,8 @@ orderHandler.writeTry(Order("o1", List("apple", "banana"), Some(0.1))).get
 // BSONDocument("id" -> "o1", "items" -> BSONArray("apple", "banana"), "discount" -> 0.1)
 ```
 
-For a map whose keys are not `String`, ReactiveMongo BSON represents keys as document field names. Supply both directions of conversion:
+For a map whose keys are not `String`, ReactiveMongo BSON represents keys as document field names. Supply the
+direction needed by the derived type class; a combined handler needs both:
 
 ```scala
 import reactivemongo.api.bson.{ KeyReader, KeyWriter }
@@ -197,7 +208,8 @@ implicit val userIdReader: KeyReader[UserId] = KeyReader(UserId.apply)
 implicit val userIdWriter: KeyWriter[UserId] = KeyWriter(_.value)
 ```
 
-Derivation fails if either codec is absent; this prevents asymmetric read/write handlers.
+`KindlingsBsonDocumentReader.derived` requires only `KeyReader`; `KindlingsBsonDocumentWriter.derived` requires only
+`KeyWriter`; `KindlingsBsonDocumentHandler.derived` requires both.
 
 ## Comparison with ReactiveMongo BSON macros
 
@@ -220,6 +232,7 @@ val handler = KindlingsBsonDocumentHandler.derived[Root]
 | Nested `@Flatten` fields | Child document handlers must be materialized | Flattened children derive recursively from the root |
 | Scala 3 derivation syntax | `Macros.handler[A]` | Also supports `derives KindlingsBsonDocumentHandler` |
 | Scala 3 named tuples | Handler derivation is not supported | Supported, including single-element named tuples |
+| Standalone document codecs | `Macros.reader[A]` / `Macros.writer[A]` | `KindlingsBsonDocumentReader.derived[A]` / `KindlingsBsonDocumentWriter.derived[A]`, each directional |
 | One-off serialization | Materialize a writer or handler | `KindlingsBsonDocumentHandler.write(value)` emits only the write path |
 | Naming, map keys, and field annotations | Supported | Supported |
 
@@ -278,6 +291,8 @@ The derived handler is compatible with ReactiveMongo APIs because it is a `BSOND
 | ReactiveMongo BSON | Kindlings BSON |
 |---|---|
 | `Macros.handler[A]` | `KindlingsBsonDocumentHandler.derived[A]` |
+| `Macros.reader[A]` | `KindlingsBsonDocumentReader.derived[A]` |
+| `Macros.writer[A]` | `KindlingsBsonDocumentWriter.derived[A]` |
 | `MacroConfiguration()` | `BsonDocumentHandlerConfig.default` |
 | `@Key("name")` | `@FieldName("name")` |
 | type-position `@Reader` / `@Writer` | value-position `@Reader(reader)` / `@Writer(writer)` |
@@ -289,7 +304,6 @@ Check existing BSON round-trip tests when migrating, especially for custom field
 ## Limitations
 
 - JVM only.
-- Derives combined document handlers; it does not provide legacy standalone `Macros.reader` or `Macros.writer` entry points.
 - Non-sealed legacy `UnionType` ADTs are not supported. Prefer a sealed protocol sub-hierarchy, even when the broader
   domain parent must remain open, or write a manual handler. For example, `sealed trait ExternalEvent extends Event`
   can contain only the event variants admitted by the BSON protocol while `Event` remains extensible.

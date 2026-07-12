@@ -15,7 +15,7 @@ This file tracks deliberate follow-up work introduced while implementing
 - [ ] Extract immutable enum discriminator metadata shared by reader and writer builders.
 - [ ] Move directional contexts and body builders out of `BsonDocumentHandlerMacrosImpl.scala`.
 - [ ] Replace duplicated record planning with a direction-parameterized structural planner where it remains readable.
-- [ ] Keep mutable `ValDefsCache` state strictly separate between directions.
+- [x] Keep mutable `ValDefsCache` state strictly separate between directions.
 
 ## Remaining handoff scope
 
@@ -31,5 +31,5 @@ This file tracks deliberate follow-up work introduced while implementing
   - Scala 2 reports an ambiguous `BSONReader` directly while `MacroSuite.compileErrors` is typechecking its nested
     source, before the suite can capture the diagnostic. Keep any eventual regression shared; do not move it to a
     Scala-3-only source set.
-- [ ] User guide, feature parity, and research-document updates.
+- [x] User guide, feature parity, and research-document updates.
 - [ ] Full JVM matrix, snippet tests, final code review, and cleanup.

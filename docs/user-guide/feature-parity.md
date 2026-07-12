@@ -611,7 +611,7 @@ To prevent infinite macro expansion, the kindlings macro filters out its own `de
 | Standard ReactiveMongo interoperability | Native `BSONDocumentHandler` | `KindlingsBsonDocumentHandler` extends it | Parity |
 | Scala 3 `derives` | No derivable type-class companion | `derives KindlingsBsonDocumentHandler` | Improvement |
 | One-off write-only expansion | Materialize a writer or handler | `KindlingsBsonDocumentHandler.write(value)` | Improvement |
-| Standalone document reader/writer derivation | `Macros.reader` and `Macros.writer` | Combined document handler only | Gap |
+| Standalone document reader/writer derivation | `Macros.reader` and `Macros.writer` | `KindlingsBsonDocumentReader.derived` and `KindlingsBsonDocumentWriter.derived`; each derives only its own direction | Parity |
 | Legacy non-sealed `UnionType` ADTs | Supported | Not supported | Gap |
 
 The central improvement is reduced handler plumbing. For example, deriving a parent containing an `AnyVal`, or a root
