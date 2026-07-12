@@ -22,10 +22,10 @@ This file tracks deliberate follow-up work introduced while implementing
 - [x] Standalone `@Flatten` reader and writer derivation.
 - [x] Remaining annotation/config parity (`NoneAsNull`, defaults, unexpected fields, custom naming).
 - [x] Directional collection/map readers and writers, including directional map-key codecs.
-- [ ] Combined handler composition from the two lower-level directional algebras.
-  - The combined dispatcher must select structural composition only after standard extensions load: `Option` and `Map`
-    can parse as case-class/enum-like shapes before their `IsOption`/`IsMap` classification is available.
-- [ ] `parTuple` aggregation for independent combined failures.
+- [x] Combined handler composition from the two lower-level directional algebras.
+  - Structural composition is selected only after standard extensions load, preserving the legacy path for `Option`,
+    `Map`, collections, value types, named tuples, and explicit root handlers.
+- [x] `parTuple` aggregation for independent combined failures.
 - [ ] Recursive ADT, ambiguity, policy, and asymmetric compile-error coverage.
 - [ ] User guide, feature parity, and research-document updates.
 - [ ] Full JVM matrix, snippet tests, final code review, and cleanup.

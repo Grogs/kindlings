@@ -1435,7 +1435,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         ).check("Cannot flatten field value: java.lang.String is not a case class or sealed trait")
       }
 
-      test("Map with a non-String key and no key codecs fails derivation") {
+      test("Map with a non-String key and no key codecs reports both directional failures") {
         compileErrors(
           """
           import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
@@ -1444,7 +1444,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
           final case class InvalidKeyMap(values: Map[MissingKeyCodec, String])
           KindlingsBsonDocumentHandler.derived[InvalidKeyMap]
           """
-        ).check("Map key", "MissingKeyCodec", "requires both KeyReader and KeyWriter")
+        ).check("Map key", "MissingKeyCodec", "requires a KeyReader", "requires a KeyWriter")
       }
 
       test("@Reader with the wrong field type fails derivation") {

@@ -1423,15 +1423,17 @@ trait BsonDocumentHandlerMacrosImpl
         s"Deriving BSONDocumentHandler for ${Type[A].prettyPrint} at: ${Environment.currentPosition.prettyPrint}"
       ) {
         MIO.scoped { runSafe =>
-          val fromCtx: DerivationCtx[A] => Expr[KindlingsBsonDocumentHandler[A]] = ctx =>
-            runSafe {
-              for {
-                _ <- ensureStandardExtensionsLoaded()
-                result <- deriveResultRecursively[A](using ctx)
-                cache <- ctx.cache.get
-              } yield cache.toValDefs.use(_ => result)
-            }
-          fromCtx(DerivationCtx.from[A](selfType, configExpr, evaluatedConfig))
+          runSafe {
+            for {
+              // The standard extensions classify Option, Map, collections, and value types. Do not inspect
+              // CaseClass/Enum before this point: Scala's Option can otherwise look like a structural enum.
+              _ <- ensureStandardExtensionsLoaded()
+              result <-
+                if (shouldComposeDirectionalHandler[A](selfType))
+                  deriveDirectionalCombinedHandler[A](configExpr, evaluatedConfig)
+                else deriveLegacyHandler[A](selfType, configExpr, evaluatedConfig)
+            } yield result
+          }
         }
       }
       .flatTap(result => Log.info(s"Derived final result for: ${result.prettyPrint}"))
@@ -1478,6 +1480,84 @@ trait BsonDocumentHandlerMacrosImpl
   }
 
   // Shared helpers
+
+  /** Whether the root can use the independently-derived reader/writer bodies.
+    *
+    * This is deliberately evaluated after [[ensureStandardExtensionsLoaded]], so the standard type extractors win over
+    * the broad structural parsers. An explicit BSONDocumentHandler remains the highest-priority root override.
+    */
+  private def shouldComposeDirectionalHandler[A: Type](derivedType: Option[??]): Boolean = {
+    implicit val HandlerA: Type[KindlingsBsonDocumentHandler[A]] = Types.BsonDocumentHandler[A]
+    implicit val ParentHandlerA: Type[reactivemongo.api.bson.BSONDocumentHandler[A]] =
+      Types.ExternalBsonDocumentHandler[A]
+    val rootHasKindlingsHandler =
+      derivedType.exists(_.Underlying =:= Type[A]) &&
+        Type[KindlingsBsonDocumentHandler[A]]
+          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+          .toOption
+          .nonEmpty
+    val hasExternalHandler =
+      !rootHasKindlingsHandler &&
+        Type[reactivemongo.api.bson.BSONDocumentHandler[A]]
+          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+          .toOption
+          .nonEmpty
+
+    !hasExternalHandler && !isDirectionalOption[A] && !isDirectionalMap[A] && !isDirectionalCollection[A] &&
+    !isDirectionalValueType[A] && !Type[A].isNamedTuple && isCaseClassOrEnum[A]
+  }
+
+  /** Builds a combined handler from the standalone reader and writer derivation algebras.
+    *
+    * The two contexts intentionally own distinct [[ValDefsCache]] locals. Their bodies can therefore be derived with
+    * `parTuple`, retaining independent reader/writer failures while keeping recursive helpers in their own cache.
+    */
+  private def deriveDirectionalCombinedHandler[A: Type](
+      configExpr: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+  ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+    val readerCtx = ReaderCtx.from[A](configExpr, evaluatedConfig)
+    val writerCtx = WriterCtx.from[A](configExpr, evaluatedConfig)
+
+    for {
+      _ <- checkDerivationPolicyOncePerExpansion(Type[A].prettyPrint)
+      _ <- deriveReaderBody[A](readerCtx).parTuple(deriveWriterBody[A](writerCtx))
+      readerCall <- readerCtx.cache.get1Ary[BSONDocument, Try[A]]("cached-reader-body")
+      writerCall <- writerCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-writer-body")
+      readerCache <- readerCtx.cache.get
+      writerCache <- writerCtx.cache.get
+    } yield (readerCall, writerCall) match {
+      case (Some(read), Some(write)) =>
+        readerCache.toValDefs.use { _ =>
+          writerCache.toValDefs.use { _ =>
+            Expr.quote {
+              hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+                .handlerInstance[A](
+                  (document: BSONDocument) => Expr.splice(read(Expr.quote(document))),
+                  (value: A) => Expr.splice(write(Expr.quote(value)))
+                )
+            }
+          }
+        }
+      case _ =>
+        Environment.reportErrorAndAbort(s"No directional BSON document body generated for ${Type[A].prettyPrint}")
+    }
+  }
+
+  private def deriveLegacyHandler[A: Type](
+      derivedType: Option[??],
+      configExpr: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+  ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
+    val legacyCtx = DerivationCtx.from[A](derivedType, configExpr, evaluatedConfig)
+    for {
+      result <- deriveResultRecursively[A](using legacyCtx)
+      cache <- legacyCtx.cache.get
+    } yield cache.toValDefs.use(_ => result)
+  }
 
   def isCaseClassOrEnum[A: Type]: Boolean =
     CaseClass.parse[A].toEither.isRight || Enum.parse[A].toEither.isRight
