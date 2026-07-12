@@ -303,10 +303,10 @@ trait BsonDocumentHandlerMacrosImpl
       _ <-
         if (builder.isBuilt(state, key)) MIO.pure(())
         else
-          CaseClass.parse[A].toEither match {
-            case Left(reason)     => MIO.fail(new Exception(s"${Type[A].prettyPrint} is not a case class: $reason"))
-            case Right(caseClass) =>
-              val fields = caseClass.primaryConstructor.parameters.flatten.toList
+          directionalRecordConstructor[A] match {
+            case Left(reason)       => MIO.fail(new Exception(reason))
+            case Right(constructor) =>
+              val fields = constructor.parameters.flatten.toList
               readerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
                 runSafe(readerCtx.cache.buildCachedWith(key, builder) { case (_, document) =>
                   runSafe {
@@ -347,7 +347,7 @@ trait BsonDocumentHandlerMacrosImpl
                       case Nil          => MIO.pure(List.empty[(String, Expr_??)])
                     }
                     derivedFields.map { values =>
-                      val construct = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                      val construct = foldInstanceFree(constructor, "Constructor")(
                         onTypes = _ => Map.empty,
                         onValues = _ => values.toList.toMap
                       ) match {
@@ -362,6 +362,21 @@ trait BsonDocumentHandlerMacrosImpl
           }
     } yield ()
   }
+
+  private def directionalRecordConstructor[A: Type]: Either[String, Method] =
+    CaseClass.parse[A].toEither match {
+      case Right(caseClass)      => Right(caseClass.primaryConstructor)
+      case Left(caseClassReason) =>
+        NamedTuple.parse[A].toEither match {
+          case Right(namedTuple)      => Right(namedTuple.primaryConstructor)
+          case Left(namedTupleReason) =>
+            Left(
+              s"${Type[A].prettyPrint} is neither a case class nor a named tuple: $caseClassReason; $namedTupleReason"
+            )
+        }
+    }
+
+  private def isDirectionalRecord[A: Type]: Boolean = directionalRecordConstructor[A].isRight
 
   final case class ReaderCtx[A](
       tpe: Type[A],
@@ -428,7 +443,7 @@ trait BsonDocumentHandlerMacrosImpl
             }
           case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
         }
-      case Left(_) if CaseClass.parse[A].toEither.isRight =>
+      case Left(_) if isDirectionalRecord[A] =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         deriveReaderBody[A](readerCtx) >> readerCtx.cache
           .get1Ary[BSONDocument, Try[A]]("cached-reader-body")
@@ -530,16 +545,16 @@ trait BsonDocumentHandlerMacrosImpl
       _ <-
         if (builder.isBuilt(state, key)) MIO.pure(())
         else
-          CaseClass.parse[A].toEither match {
-            case Left(reason)     => MIO.fail(new Exception(s"${Type[A].prettyPrint} is not a case class: $reason"))
-            case Right(caseClass) =>
+          directionalRecordConstructor[A] match {
+            case Left(reason)       => MIO.fail(new Exception(reason))
+            case Right(constructor) =>
               writerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
                 runSafe(writerCtx.cache.buildCachedWith(key, builder) { case (_, value) =>
                   runSafe {
                     implicit val IgnoreT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
                       Types.ignoreAnn
-                    val parameters = caseClass.primaryConstructor.parameters.flatten.toList
-                    val fieldValues = caseClass.caseFieldValuesAt(value).toList.filterNot { case (name, _) =>
+                    val parameters = constructor.parameters.flatten.toList
+                    val fieldValues = directionalRecordFieldValues[A](value).filterNot { case (name, _) =>
                       val parameter = parameters.find(_._1 == name).get._2
                       hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter)
                     }
@@ -586,6 +601,23 @@ trait BsonDocumentHandlerMacrosImpl
           }
     } yield ()
   }
+
+  private def directionalRecordFieldValues[A: Type](value: Expr[A]): List[(String, Expr_??)] =
+    CaseClass.parse[A].toEither match {
+      case Right(caseClass) => caseClass.caseFieldValuesAt(value).toList
+      case Left(_)          =>
+        NamedTuple.parse[A].toEither match {
+          case Right(namedTuple) =>
+            namedTuple.primaryConstructor.parameters.flatten.toList.map { case (name, parameter) =>
+              import parameter.tpe.Underlying as Field
+              val index = Expr(parameter.index)
+              name -> Expr.quote {
+                Expr.splice(value).asInstanceOf[Product].productElement(Expr.splice(index)).asInstanceOf[Field]
+              }.as_??
+            }
+          case Left(reason) => Environment.reportErrorAndAbort(reason)
+        }
+    }
 
   final case class WriterCtx[A](
       tpe: Type[A],
@@ -643,7 +675,7 @@ trait BsonDocumentHandlerMacrosImpl
             }
           case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
         }
-      case Left(_) if CaseClass.parse[A].toEither.isRight =>
+      case Left(_) if isDirectionalRecord[A] =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
         deriveWriterBody[A](writerCtx) >> writerCtx.cache
