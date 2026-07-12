@@ -296,6 +296,19 @@ trait BsonDocumentHandlerMacrosImpl
   private def deriveReaderBody[A: Type](readerCtx: ReaderCtx[A]): MIO[Unit] = {
     implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    readerCtx.cache.get1Ary[BSONDocument, Try[A]]("cached-reader-body").flatMap {
+      case Some(_) => MIO.pure(())
+      case None    =>
+        Enum.parse[A].toEither match {
+          case Right(enumm) => deriveEnumReaderBody[A](enumm, readerCtx)
+          case Left(_)      => deriveRecordReaderBody[A](readerCtx)
+        }
+    }
+  }
+
+  private def deriveRecordReaderBody[A: Type](readerCtx: ReaderCtx[A]): MIO[Unit] = {
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
     val key = "cached-reader-body"
     val builder = ValDefBuilder.ofDef1[BSONDocument, Try[A]](s"read_${Type[A].shortName}", "document")
     for {
@@ -361,6 +374,105 @@ trait BsonDocumentHandlerMacrosImpl
               }
           }
     } yield ()
+  }
+
+  private def deriveEnumReaderBody[A: Type](enumm: Enum[A], readerCtx: ReaderCtx[A]): MIO[Unit] = {
+    val children = enumm.exhaustiveChildren.fold(enumm.directChildren.toList)(_.toList)
+    if (children.isEmpty)
+      MIO.fail(BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint))
+    else {
+      implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+      val key = "cached-reader-body"
+      val builder = ValDefBuilder.ofDef1[BSONDocument, Try[A]](s"read_${Type[A].shortName}", "document")
+      val discriminatorField = directionalDiscriminatorField(readerCtx.config, readerCtx.evaluatedConfig)
+      val knownNames = Expr(
+        children
+          .map { case (_, child) =>
+            import child.Underlying as Child
+            Type[Child].shortName
+          }
+          .mkString(", ")
+      )
+      for {
+        state <- readerCtx.cache.get
+        _ <-
+          if (builder.isBuilt(state, key)) MIO.pure(())
+          else
+            readerCtx.cache.forwardDeclare(key, builder) >> NonEmptyList(children.head, children.tail)
+              .parTraverse { case (_, child) =>
+                import child.Underlying as Child
+                implicit val TryChildT: Type[Try[Child]] = Types.TryCtor[Child]
+                val discriminator = directionalDiscriminator[Child](readerCtx.config, readerCtx.evaluatedConfig)
+                Expr.singletonOf[Child] match {
+                  case Some(singleton) =>
+                    MIO.pure { (document: Expr[BSONDocument], fallback: Expr[Try[A]]) =>
+                      Expr.quote {
+                        Expr.splice(document).get(Expr.splice(discriminatorField)) match {
+                          case Some(reactivemongo.api.bson.BSONString(value)) if value == Expr.splice(discriminator) =>
+                            scala.util.Success(Expr.splice(singleton).asInstanceOf[A])
+                          case _ => Expr.splice(fallback)
+                        }
+                      }
+                    }
+                  case None =>
+                    deriveReaderBody[Child](readerCtx.nest[Child]) >> readerCtx.cache
+                      .get1Ary[BSONDocument, Try[Child]](key)
+                      .flatMap {
+                        case Some(call) =>
+                          MIO.pure { (document: Expr[BSONDocument], fallback: Expr[Try[A]]) =>
+                            Expr.quote {
+                              Expr.splice(document).get(Expr.splice(discriminatorField)) match {
+                                case Some(reactivemongo.api.bson.BSONString(value))
+                                    if value == Expr.splice(discriminator) =>
+                                  Expr
+                                    .splice(call(Expr.quote(Expr.splice(document) -- Expr.splice(discriminatorField))))
+                                    .map(_.asInstanceOf[A])
+                                case _ => Expr.splice(fallback)
+                              }
+                            }
+                          }
+                        case None => MIO.fail(new Exception(s"No cached reader body for ${Type[Child].prettyPrint}"))
+                      }
+                }
+              }
+              .flatMap { dispatchers =>
+                readerCtx.cache.buildCachedWith(key, builder) { case (_, document) =>
+                  val failure = Expr.quote {
+                    scala.util.Failure(
+                      new IllegalArgumentException(
+                        "Unknown type discriminator: " +
+                          Expr.splice(document).get(Expr.splice(discriminatorField)).getOrElse("<none>") +
+                          ". Expected one of: " + Expr.splice(knownNames)
+                      )
+                    ): Try[A]
+                  }
+                  dispatchers.toList.foldRight(failure)((dispatch, fallback) => dispatch(document, fallback))
+                }
+              }
+      } yield ()
+    }
+  }
+
+  private def directionalDiscriminatorField(
+      config: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+  ): Expr[String] = evaluatedConfig
+    .flatMap(_.discriminatorFieldName)
+    .fold {
+      Expr.quote(Expr.splice(config).discriminatorFieldName.getOrElse("className"))
+    }(Expr(_))
+
+  private def directionalDiscriminator[A: Type](
+      config: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+  ): Expr[String] = evaluatedConfig.map(_.typeNaming) match {
+    case Some(TypeNaming.SimpleName) => Expr(Type[A].shortName)
+    case Some(TypeNaming.FullName)   => Expr(fullNameOf[A])
+    case _                           =>
+      val simple = Expr(Type[A].shortName)
+      val full = Expr(fullNameOf[A])
+      Expr.quote(Expr.splice(config).typeNaming(Expr.splice(simple), Expr.splice(full)))
   }
 
   private def directionalRecordConstructor[A: Type]: Either[String, Method] =
@@ -443,7 +555,7 @@ trait BsonDocumentHandlerMacrosImpl
             }
           case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
         }
-      case Left(_) if isDirectionalRecord[A] =>
+      case Left(_) if isDirectionalRecord[A] || Enum.parse[A].toEither.isRight =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         deriveReaderBody[A](readerCtx) >> readerCtx.cache
           .get1Ary[BSONDocument, Try[A]]("cached-reader-body")
@@ -538,6 +650,19 @@ trait BsonDocumentHandlerMacrosImpl
   private def deriveWriterBody[A: Type](writerCtx: WriterCtx[A]): MIO[Unit] = {
     implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+    writerCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-writer-body").flatMap {
+      case Some(_) => MIO.pure(())
+      case None    =>
+        Enum.parse[A].toEither match {
+          case Right(enumm) => deriveEnumWriterBody[A](enumm, writerCtx)
+          case Left(_)      => deriveRecordWriterBody[A](writerCtx)
+        }
+    }
+  }
+
+  private def deriveRecordWriterBody[A: Type](writerCtx: WriterCtx[A]): MIO[Unit] = {
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
     val key = "cached-writer-body"
     val builder = ValDefBuilder.ofDef1[A, Try[BSONDocument]](s"write_${Type[A].shortName}", "value")
     for {
@@ -600,6 +725,64 @@ trait BsonDocumentHandlerMacrosImpl
               }
           }
     } yield ()
+  }
+
+  private def deriveEnumWriterBody[A: Type](enumm: Enum[A], writerCtx: WriterCtx[A]): MIO[Unit] = {
+    val children = enumm.exhaustiveChildren.fold(enumm.directChildren.toList)(_.toList)
+    if (children.isEmpty)
+      MIO.fail(BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint))
+    else {
+      implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+      val key = "cached-writer-body"
+      val builder = ValDefBuilder.ofDef1[A, Try[BSONDocument]](s"write_${Type[A].shortName}", "value")
+      val discriminatorField = directionalDiscriminatorField(writerCtx.config, writerCtx.evaluatedConfig)
+      for {
+        state <- writerCtx.cache.get
+        _ <-
+          if (builder.isBuilt(state, key)) MIO.pure(())
+          else
+            writerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
+              runSafe(writerCtx.cache.buildCachedWith(key, builder) { case (_, value) =>
+                runSafe(
+                  enumm
+                    .parMatchOn[MIO, Try[BSONDocument]](value) { matched =>
+                      import matched.{Underlying as Child, value as childValue}
+                      val discriminator = directionalDiscriminator[Child](writerCtx.config, writerCtx.evaluatedConfig)
+                      Expr.singletonOf[Child] match {
+                        case Some(_) =>
+                          MIO.pure(Expr.quote {
+                            scala.util.Success(
+                              BSONDocument(Expr.splice(discriminatorField) -> Expr.splice(discriminator))
+                            )
+                          })
+                        case None =>
+                          deriveWriterBody[Child](writerCtx.nest[Child]) >> writerCtx.cache
+                            .get1Ary[Child, Try[BSONDocument]](key)
+                            .flatMap {
+                              case Some(call) =>
+                                MIO.pure(Expr.quote {
+                                  Expr.splice(call(childValue)).map { document =>
+                                    document ++ BSONDocument(
+                                      Expr.splice(discriminatorField) -> Expr.splice(discriminator)
+                                    )
+                                  }
+                                })
+                              case None =>
+                                MIO.fail(new Exception(s"No cached writer body for ${Type[Child].prettyPrint}"))
+                            }
+                      }
+                    }
+                    .flatMap {
+                      case Some(result) => MIO.pure(result)
+                      case None         =>
+                        MIO.fail(BsonDocumentHandlerDerivationError.NoChildrenInSealedTrait(Type[A].prettyPrint))
+                    }
+                )
+              })
+            }
+      } yield ()
+    }
   }
 
   private def directionalRecordFieldValues[A: Type](value: Expr[A]): List[(String, Expr_??)] =
@@ -675,7 +858,7 @@ trait BsonDocumentHandlerMacrosImpl
             }
           case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
         }
-      case Left(_) if isDirectionalRecord[A] =>
+      case Left(_) if isDirectionalRecord[A] || Enum.parse[A].toEither.isRight =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
         deriveWriterBody[A](writerCtx) >> writerCtx.cache

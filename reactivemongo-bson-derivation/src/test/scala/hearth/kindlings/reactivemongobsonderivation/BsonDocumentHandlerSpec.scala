@@ -105,6 +105,21 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         WithValueType(WrapperId(42), "test")
       )
     }
+
+    test("reader derives singleton and recursive sealed ADTs independently") {
+      val enumReader = KindlingsBsonDocumentReader.derived[SimpleEnum]
+      val treeReader = KindlingsBsonDocumentReader.derived[Tree]
+      assertEquals(
+        enumReader.readDocument(BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Foo")).get,
+        Foo
+      )
+      val document = BSONDocument(
+        "left" -> BSONDocument("data" -> "a", "className" -> "hearth.kindlings.reactivemongobsonderivation.TreeLeaf"),
+        "right" -> BSONDocument("data" -> "b", "className" -> "hearth.kindlings.reactivemongobsonderivation.TreeLeaf"),
+        "className" -> "hearth.kindlings.reactivemongobsonderivation.TreeNode"
+      )
+      assertEquals(treeReader.readDocument(document).get, TreeNode(TreeLeaf("a"), TreeLeaf("b")))
+    }
   }
 
   group("standalone document writers") {
@@ -196,6 +211,19 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         writer.writeTry(WithValueType(WrapperId(42), "test")).get,
         BSONDocument("id" -> 42, "name" -> "test")
+      )
+    }
+
+    test("writer derives singleton and recursive sealed ADTs independently") {
+      val enumWriter = KindlingsBsonDocumentWriter.derived[SimpleEnum]
+      val treeWriter = KindlingsBsonDocumentWriter.derived[Tree]
+      assertEquals(
+        enumWriter.writeTry(Foo).get,
+        BSONDocument("className" -> "hearth.kindlings.reactivemongobsonderivation.Foo")
+      )
+      assertEquals(
+        treeWriter.writeTry(TreeNode(TreeLeaf("a"), TreeLeaf("b"))).get.get("className"),
+        Some(BSONString("hearth.kindlings.reactivemongobsonderivation.TreeNode"))
       )
     }
   }
