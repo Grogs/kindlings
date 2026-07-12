@@ -120,6 +120,33 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       )
       assertEquals(treeReader.readDocument(document).get, TreeNode(TreeLeaf("a"), TreeLeaf("b")))
     }
+
+    test("reader flattens nested records independently") {
+      val reader = KindlingsBsonDocumentReader.derived[OuterFlatten]
+      assertEquals(
+        reader.readDocument(BSONDocument("a" -> 1, "b" -> 2, "c" -> "middle", "d" -> "outer")).get,
+        OuterFlatten(MiddleFlatten(InnerFlatten(1, 2), "middle"), "outer")
+      )
+    }
+
+    test("reader flattening honors a directional custom reader") {
+      val reader = KindlingsBsonDocumentReader.derived[FlattenWithCustomIO]
+      assertEquals(
+        reader.readDocument(BSONDocument("name" -> "range", "start" -> 2, "end" -> 5)).get,
+        FlattenWithCustomIO("range", Range(2, 5))
+      )
+    }
+
+    test("reader flattening uses an external document reader") {
+      implicit val externalReader: BSONDocumentReader[ExternalFlattened] = BSONDocumentReader.from { document =>
+        scala.util.Success(ExternalFlattened(document.getAsTry[Int]("externalValue").get))
+      }
+      val reader = KindlingsBsonDocumentReader.derived[WithExternalFlatten]
+      assertEquals(
+        reader.readDocument(BSONDocument("name" -> "external", "externalValue" -> 42)).get,
+        WithExternalFlatten("external", ExternalFlattened(42))
+      )
+    }
   }
 
   group("standalone document writers") {
@@ -224,6 +251,33 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         treeWriter.writeTry(TreeNode(TreeLeaf("a"), TreeLeaf("b"))).get.get("className"),
         Some(BSONString("hearth.kindlings.reactivemongobsonderivation.TreeNode"))
+      )
+    }
+
+    test("writer flattens nested records independently") {
+      val writer = KindlingsBsonDocumentWriter.derived[OuterFlatten]
+      assertEquals(
+        writer.writeTry(OuterFlatten(MiddleFlatten(InnerFlatten(1, 2), "middle"), "outer")).get,
+        BSONDocument("a" -> 1, "b" -> 2, "c" -> "middle", "d" -> "outer")
+      )
+    }
+
+    test("writer flattening honors a directional custom writer") {
+      val writer = KindlingsBsonDocumentWriter.derived[FlattenWithCustomIO]
+      assertEquals(
+        writer.writeTry(FlattenWithCustomIO("range", Range(2, 5))).get,
+        BSONDocument("name" -> "range", "start" -> 2, "end" -> 5)
+      )
+    }
+
+    test("writer flattening uses an external document writer") {
+      implicit val externalWriter: BSONDocumentWriter[ExternalFlattened] = BSONDocumentWriter { value =>
+        BSONDocument("externalValue" -> value.value)
+      }
+      val writer = KindlingsBsonDocumentWriter.derived[WithExternalFlatten]
+      assertEquals(
+        writer.writeTry(WithExternalFlatten("external", ExternalFlattened(42))).get,
+        BSONDocument("name" -> "external", "externalValue" -> 42)
       )
     }
   }

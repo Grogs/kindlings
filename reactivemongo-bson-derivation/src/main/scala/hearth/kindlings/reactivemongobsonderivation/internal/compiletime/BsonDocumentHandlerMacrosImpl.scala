@@ -339,7 +339,26 @@ trait BsonDocumentHandlerMacrosImpl
                               )
                             )
                         }
-                      else {
+                      else if (isDirectionalFlattened(parameter)) {
+                        if (readerCtx.flattenStack.contains(Type[Field].prettyPrint) || Type[Field] =:= Type[A])
+                          MIO.fail(
+                            BsonDocumentHandlerDerivationError.CannotFlattenRecursiveField(name, Type[A].prettyPrint)
+                          )
+                        else
+                          annotatedReader[Field](parameter) match {
+                            case Some(fieldReader) =>
+                              MIO.pure(name -> Expr.quote {
+                                Expr.splice(fieldReader).readTry(Expr.splice(document)).get
+                              }.as_??)
+                            case None =>
+                              resolveDirectionalFlattenedReader[Field](name, readerCtx.nestFlattened[Field]).map {
+                                fieldReader =>
+                                  name -> Expr.quote {
+                                    Expr.splice(fieldReader).readDocument(Expr.splice(document)).get
+                                  }.as_??
+                              }
+                          }
+                      } else {
                         val key = resolveDirectionalFieldKey(
                           name,
                           parameter,
@@ -488,22 +507,54 @@ trait BsonDocumentHandlerMacrosImpl
         }
     }
 
+  private def isDirectionalFlattened(parameter: Parameter): Boolean = {
+    implicit val FlattenT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Flatten] = Types.flattenAnn
+    hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Flatten](parameter)
+  }
+
+  private def resolveDirectionalFlattenedReader[A: Type](
+      fieldName: String,
+      readerCtx: ReaderCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONDocumentReader[A]]] = {
+    implicit val ReaderT: Type[reactivemongo.api.bson.BSONDocumentReader[A]] = Types.ExternalBsonDocumentReader[A]
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    Type[reactivemongo.api.bson.BSONDocumentReader[A]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toEither match {
+      case Right(reader)                                                                        => MIO.pure(reader)
+      case Left(_) if directionalRecordConstructor[A].isRight || Enum.parse[A].toEither.isRight =>
+        deriveReaderBody[A](readerCtx) >> readerCtx.cache.get1Ary[BSONDocument, Try[A]]("cached-reader-body").flatMap {
+          case Some(call) =>
+            MIO.pure(Expr.quote {
+              reactivemongo.api.bson.BSONDocumentReader.from[A](document => Expr.splice(call(Expr.quote(document))))
+            })
+          case None => MIO.fail(new Exception(s"No cached reader body for ${Type[A].prettyPrint}"))
+        }
+      case Left(_) =>
+        MIO.fail(BsonDocumentHandlerDerivationError.CannotFlattenNonDocumentField(fieldName, Type[A].prettyPrint))
+    }
+  }
+
   private def isDirectionalRecord[A: Type]: Boolean = directionalRecordConstructor[A].isRight
 
   final case class ReaderCtx[A](
       tpe: Type[A],
       cache: MLocal[ValDefsCache],
       config: Expr[BsonDocumentHandlerConfig],
-      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+      evaluatedConfig: Option[BsonDocumentHandlerConfig],
+      flattenStack: List[String]
   ) {
-    def nest[B: Type]: ReaderCtx[B] = ReaderCtx(Type[B], cache, config, evaluatedConfig)
+    def nest[B: Type]: ReaderCtx[B] = ReaderCtx(Type[B], cache, config, evaluatedConfig, flattenStack)
+    def nestFlattened[B: Type]: ReaderCtx[B] =
+      ReaderCtx(Type[B], cache, config, evaluatedConfig, tpe.prettyPrint :: flattenStack)
   }
 
   object ReaderCtx {
     def from[A: Type](
         config: Expr[BsonDocumentHandlerConfig],
         evaluatedConfig: Option[BsonDocumentHandlerConfig]
-    ): ReaderCtx[A] = ReaderCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig)
+    ): ReaderCtx[A] = ReaderCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig, Nil)
   }
 
   private def resolveDirectionalReader[A: Type](
@@ -693,32 +744,66 @@ trait BsonDocumentHandlerMacrosImpl
                         writerCtx.config,
                         writerCtx.evaluatedConfig
                       )
-                      annotatedWriter[Field](parameter)
-                        .fold(resolveDirectionalWriter[Field](writerCtx.nest[Field]))(MIO.pure)
-                        .map { fieldWriter =>
-                          Expr.quote {
-                            Expr
-                              .splice(fieldWriter)
-                              .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
-                              .map(bson => reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
+                      if (isDirectionalFlattened(parameter)) {
+                        if (writerCtx.flattenStack.contains(Type[Field].prettyPrint) || Type[Field] =:= Type[A])
+                          MIO.fail(
+                            BsonDocumentHandlerDerivationError.CannotFlattenRecursiveField(name, Type[A].prettyPrint)
+                          )
+                        else
+                          annotatedWriter[Field](parameter) match {
+                            case Some(fieldWriter) =>
+                              MIO.pure(Expr.quote {
+                                Expr
+                                  .splice(fieldWriter)
+                                  .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
+                                  .flatMap {
+                                    case document: BSONDocument => scala.util.Success(document.elements.toList)
+                                    case value                  =>
+                                      scala.util.Failure(
+                                        new IllegalArgumentException(
+                                          "@Flatten @Writer must produce BSONDocument, got " + value
+                                        )
+                                      )
+                                  }
+                              })
+                            case None =>
+                              resolveDirectionalFlattenedWriter[Field](name, writerCtx.nestFlattened[Field]).map {
+                                fieldWriter =>
+                                  Expr.quote {
+                                    Expr
+                                      .splice(fieldWriter)
+                                      .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
+                                      .map(_.elements.toList)
+                                  }
+                              }
                           }
-                        }
+                      } else
+                        annotatedWriter[Field](parameter)
+                          .fold(resolveDirectionalWriter[Field](writerCtx.nest[Field]))(MIO.pure)
+                          .map { fieldWriter =>
+                            Expr.quote {
+                              Expr
+                                .splice(fieldWriter)
+                                .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
+                                .map(bson => List(reactivemongo.api.bson.BSONElement(Expr.splice(key), bson)))
+                            }
+                          }
                     }
                     val derivedFields = fieldValues match {
                       case head :: tail => NonEmptyList(head, tail).parTraverse(deriveField).map(_.toList)
-                      case Nil          => MIO.pure(List.empty[Expr[Try[reactivemongo.api.bson.BSONElement]]])
+                      case Nil          => MIO.pure(List.empty[Expr[Try[List[reactivemongo.api.bson.BSONElement]]]])
                     }
                     derivedFields.map { elements =>
                       val sequenced = elements.toList.foldRight(
                         Expr.quote(
-                          scala.util.Success(List.empty[reactivemongo.api.bson.BSONElement]): Try[
-                            List[reactivemongo.api.bson.BSONElement]
+                          scala.util.Success(List.empty[List[reactivemongo.api.bson.BSONElement]]): Try[
+                            List[List[reactivemongo.api.bson.BSONElement]]
                           ]
                         )
                       ) { (next, tail) =>
                         Expr.quote(for { head <- Expr.splice(next); rest <- Expr.splice(tail) } yield head :: rest)
                       }
-                      Expr.quote(Expr.splice(sequenced).map(values => BSONDocument(values*)))
+                      Expr.quote(Expr.splice(sequenced).map(values => BSONDocument(values.flatten*)))
                     }
                   }
                 })
@@ -806,16 +891,43 @@ trait BsonDocumentHandlerMacrosImpl
       tpe: Type[A],
       cache: MLocal[ValDefsCache],
       config: Expr[BsonDocumentHandlerConfig],
-      evaluatedConfig: Option[BsonDocumentHandlerConfig]
+      evaluatedConfig: Option[BsonDocumentHandlerConfig],
+      flattenStack: List[String]
   ) {
-    def nest[B: Type]: WriterCtx[B] = WriterCtx(Type[B], cache, config, evaluatedConfig)
+    def nest[B: Type]: WriterCtx[B] = WriterCtx(Type[B], cache, config, evaluatedConfig, flattenStack)
+    def nestFlattened[B: Type]: WriterCtx[B] =
+      WriterCtx(Type[B], cache, config, evaluatedConfig, tpe.prettyPrint :: flattenStack)
   }
 
   object WriterCtx {
     def from[A: Type](
         config: Expr[BsonDocumentHandlerConfig],
         evaluatedConfig: Option[BsonDocumentHandlerConfig]
-    ): WriterCtx[A] = WriterCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig)
+    ): WriterCtx[A] = WriterCtx(Type[A], ValDefsCache.mlocal, config, evaluatedConfig, Nil)
+  }
+
+  private def resolveDirectionalFlattenedWriter[A: Type](
+      fieldName: String,
+      writerCtx: WriterCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONDocumentWriter[A]]] = {
+    implicit val WriterT: Type[reactivemongo.api.bson.BSONDocumentWriter[A]] = Types.ExternalBsonDocumentWriter[A]
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+    Type[reactivemongo.api.bson.BSONDocumentWriter[A]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toEither match {
+      case Right(writer)                                                                        => MIO.pure(writer)
+      case Left(_) if directionalRecordConstructor[A].isRight || Enum.parse[A].toEither.isRight =>
+        deriveWriterBody[A](writerCtx) >> writerCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-writer-body").flatMap {
+          case Some(call) =>
+            MIO.pure(Expr.quote {
+              reactivemongo.api.bson.BSONDocumentWriter.from[A](value => Expr.splice(call(Expr.quote(value))))
+            })
+          case None => MIO.fail(new Exception(s"No cached writer body for ${Type[A].prettyPrint}"))
+        }
+      case Left(_) =>
+        MIO.fail(BsonDocumentHandlerDerivationError.CannotFlattenNonDocumentField(fieldName, Type[A].prettyPrint))
+    }
   }
 
   private def resolveDirectionalWriter[A: Type](
