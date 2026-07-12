@@ -79,11 +79,13 @@ trait BsonDocumentHandlerMacrosImpl
       Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore]
 
     lazy val ignoredAutoDerivationMethods: Seq[UntypedMethod] =
-      Seq(
-        Type.of[KindlingsBsonDocumentHandler.type],
-        Type.of[KindlingsBsonDocumentReader.type],
-        Type.of[KindlingsBsonDocumentWriter.type]
-      ).flatMap(_.methods.collect { case method if method.isImplicit => method.asUntyped })
+      Type.of[KindlingsBsonDocumentHandler.type].methods.collect {
+        case method if method.isImplicit => method.asUntyped
+      } ++ Type.of[KindlingsBsonDocumentReader.type].methods.collect {
+        case method if method.isImplicit => method.asUntyped
+      } ++ Type.of[KindlingsBsonDocumentWriter.type].methods.collect {
+        case method if method.isImplicit => method.asUntyped
+      }
   }
 
   // Field name resolution
@@ -132,7 +134,9 @@ trait BsonDocumentHandlerMacrosImpl
       case None       =>
         evaluatedConfig match {
           case Some(value) => Expr(value.fieldNameMapper(fieldName))
-          case None        => Expr.quote(Expr.splice(config).fieldNameMapper(Expr(fieldName)))
+          case None        =>
+            val fieldNameExpr = Expr(fieldName)
+            Expr.quote(Expr.splice(config).fieldNameMapper(Expr.splice(fieldNameExpr)))
         }
     }
   }
@@ -236,21 +240,24 @@ trait BsonDocumentHandlerMacrosImpl
   ): Expr[KindlingsBsonDocumentReader[A]] = {
     implicit val ReaderA: Type[KindlingsBsonDocumentReader[A]] =
       Type.Ctor1.of[KindlingsBsonDocumentReader][A]
-    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
-    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
-
     implicit val ParentReaderA: Type[reactivemongo.api.bson.BSONDocumentReader[A]] =
       Types.ExternalBsonDocumentReader[A]
-    Type[reactivemongo.api.bson.BSONDocumentReader[A]]
+    val rootHasKindlingsReader = Type[KindlingsBsonDocumentReader[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-      .toEither match {
-      case Right(parent) =>
-        Expr.quote {
-          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-            .readerInstance[A]((document: BSONDocument) => Expr.splice(parent).readDocument(document))
-        }
-      case Left(_) => deriveReaderStructurally[A](configExpr)
-    }
+      .toOption
+      .nonEmpty
+    if (rootHasKindlingsReader) deriveReaderStructurally[A](configExpr)
+    else
+      Type[reactivemongo.api.bson.BSONDocumentReader[A]]
+        .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+        .toEither match {
+        case Right(parent) =>
+          Expr.quote {
+            hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+              .readerInstance[A]((document: BSONDocument) => Expr.splice(parent).readDocument(document))
+          }
+        case Left(_) => deriveReaderStructurally[A](configExpr)
+      }
   }
 
   private def deriveReaderStructurally[A: Type](
@@ -303,50 +310,52 @@ trait BsonDocumentHandlerMacrosImpl
               readerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
                 runSafe(readerCtx.cache.buildCachedWith(key, builder) { case (_, document) =>
                   runSafe {
-                    fields
-                      .parTraverse { case (name, parameter) =>
-                        import parameter.tpe.Underlying as Field
-                        implicit val IgnoreT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
-                          Types.ignoreAnn
-                        if (
-                          hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter)
-                        )
-                          directionalDefaultExpr[Field](parameter) match {
-                            case Some(default) => MIO.pure(name -> default.as_??)
-                            case None          =>
-                              MIO.fail(
-                                BsonDocumentHandlerDerivationError.CannotIgnoreFieldWithoutDefault(
-                                  name,
-                                  Type[Field].prettyPrint
-                                )
+                    val deriveField = { (entry: (String, Parameter)) =>
+                      val (name, parameter) = entry
+                      import parameter.tpe.Underlying as Field
+                      implicit val IgnoreT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
+                        Types.ignoreAnn
+                      if (hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter))
+                        directionalDefaultExpr[Field](parameter) match {
+                          case Some(default) => MIO.pure(name -> default.as_??)
+                          case None          =>
+                            MIO.fail(
+                              BsonDocumentHandlerDerivationError.CannotIgnoreFieldWithoutDefault(
+                                name,
+                                Type[Field].prettyPrint
                               )
+                            )
+                        }
+                      else {
+                        val key = resolveDirectionalFieldKey(
+                          name,
+                          parameter,
+                          readerCtx.config,
+                          readerCtx.evaluatedConfig
+                        )
+                        annotatedReader[Field](parameter)
+                          .fold(resolveDirectionalReader[Field](readerCtx.nest[Field]))(MIO.pure)
+                          .map { fieldReader =>
+                            name -> Expr.quote {
+                              Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
+                            }.as_??
                           }
-                        else {
-                          val key = resolveDirectionalFieldKey(
-                            name,
-                            parameter,
-                            readerCtx.config,
-                            readerCtx.evaluatedConfig
-                          )
-                          annotatedReader[Field](parameter)
-                            .fold(resolveDirectionalReader[Field](readerCtx.nest[Field]))(MIO.pure)
-                            .map { fieldReader =>
-                              name -> Expr.quote {
-                                Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
-                              }.as_??
-                            }
-                        }
                       }
-                      .map { values =>
-                        val construct = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
-                          onTypes = _ => Map.empty,
-                          onValues = _ => values.toList.toMap
-                        ) match {
-                          case Right(expr) => expr.value.asInstanceOf[Expr[A]]
-                          case Left(error) => Environment.reportErrorAndAbort(error)
-                        }
-                        Expr.quote(scala.util.Try(Expr.splice(construct)))
+                    }
+                    val derivedFields = fields match {
+                      case head :: tail => NonEmptyList(head, tail).parTraverse(deriveField).map(_.toList)
+                      case Nil          => MIO.pure(List.empty[(String, Expr_??)])
+                    }
+                    derivedFields.map { values =>
+                      val construct = foldInstanceFree(caseClass.primaryConstructor, "Constructor")(
+                        onTypes = _ => Map.empty,
+                        onValues = _ => values.toList.toMap
+                      ) match {
+                        case Right(expr) => expr.value.asInstanceOf[Expr[A]]
+                        case Left(error) => Environment.reportErrorAndAbort(error)
                       }
+                      Expr.quote(scala.util.Try(Expr.splice(construct)))
+                    }
                   }
                 })
               }
@@ -378,8 +387,24 @@ trait BsonDocumentHandlerMacrosImpl
     Type[reactivemongo.api.bson.BSONReader[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(reader)                                                         => MIO.pure(reader)
-      case Left(_) if !Type[A].isNamedTuple && Type[A].isInstanceOf[IsValueType] =>
+      case Right(reader)                     => MIO.pure(reader)
+      case Left(_) if isDirectionalOption[A] =>
+        Type[A] match {
+          case IsOption(option) =>
+            import option.Underlying as Inner
+            resolveDirectionalReader[Inner](readerCtx.nest[Inner]).map { innerReader =>
+              Expr.quote {
+                new reactivemongo.api.bson.BSONReader[A] {
+                  def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
+                    case reactivemongo.api.bson.BSONNull => scala.util.Success(None.asInstanceOf[A])
+                    case other => Expr.splice(innerReader).readTry(other).map(v => Some(v).asInstanceOf[A])
+                  }
+                }
+              }
+            }
+          case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
+        }
+      case Left(_) if isDirectionalValueType[A] =>
         Type[A] match {
           case IsValueType(valueType) =>
             import valueType.Underlying as Inner
@@ -403,7 +428,7 @@ trait BsonDocumentHandlerMacrosImpl
             }
           case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
         }
-      case Left(reason) if CaseClass.parse[A].toEither.isRight =>
+      case Left(_) if CaseClass.parse[A].toEither.isRight =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         deriveReaderBody[A](readerCtx) >> readerCtx.cache
           .get1Ary[BSONDocument, Try[A]]("cached-reader-body")
@@ -425,27 +450,41 @@ trait BsonDocumentHandlerMacrosImpl
     }
   }
 
+  private def isDirectionalValueType[A: Type]: Boolean =
+    !Type[A].isNamedTuple && (Type[A] match {
+      case IsValueType(_) => true
+      case _              => false
+    })
+
+  private def isDirectionalOption[A: Type]: Boolean = Type[A] match {
+    case IsOption(_) => true
+    case _           => false
+  }
+
   /** Independent writer tracer bullet. Its context and cache contain no reader state. */
   def deriveWriterTypeClass[A: Type](
       configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentWriter[A]] = {
     implicit val WriterA: Type[KindlingsBsonDocumentWriter[A]] =
       Type.Ctor1.of[KindlingsBsonDocumentWriter][A]
-    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
-    implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
-
     implicit val ParentWriterA: Type[reactivemongo.api.bson.BSONDocumentWriter[A]] =
       Types.ExternalBsonDocumentWriter[A]
-    Type[reactivemongo.api.bson.BSONDocumentWriter[A]]
+    val rootHasKindlingsWriter = Type[KindlingsBsonDocumentWriter[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-      .toEither match {
-      case Right(parent) =>
-        Expr.quote {
-          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
-            .writerInstance[A]((value: A) => Expr.splice(parent).writeTry(value))
-        }
-      case Left(_) => deriveWriterStructurally[A](configExpr)
-    }
+      .toOption
+      .nonEmpty
+    if (rootHasKindlingsWriter) deriveWriterStructurally[A](configExpr)
+    else
+      Type[reactivemongo.api.bson.BSONDocumentWriter[A]]
+        .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+        .toEither match {
+        case Right(parent) =>
+          Expr.quote {
+            hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+              .writerInstance[A]((value: A) => Expr.splice(parent).writeTry(value))
+          }
+        case Left(_) => deriveWriterStructurally[A](configExpr)
+      }
   }
 
   private def deriveWriterStructurally[A: Type](
@@ -504,39 +543,43 @@ trait BsonDocumentHandlerMacrosImpl
                       val parameter = parameters.find(_._1 == name).get._2
                       hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter)
                     }
-                    fieldValues
-                      .parTraverse { case (name, fieldValue) =>
-                        import fieldValue.Underlying as Field
-                        val parameter = parameters.find(_._1 == name).get._2
-                        val key = resolveDirectionalFieldKey(
-                          name,
-                          parameter,
-                          writerCtx.config,
-                          writerCtx.evaluatedConfig
-                        )
-                        annotatedWriter[Field](parameter)
-                          .fold(resolveDirectionalWriter[Field](writerCtx.nest[Field]))(MIO.pure)
-                          .map { fieldWriter =>
-                            Expr.quote {
-                              Expr
-                                .splice(fieldWriter)
-                                .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
-                                .map(bson => reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
-                            }
+                    val deriveField = { (entry: (String, Expr_??)) =>
+                      val (name, fieldValue) = entry
+                      import fieldValue.Underlying as Field
+                      val parameter = parameters.find(_._1 == name).get._2
+                      val key = resolveDirectionalFieldKey(
+                        name,
+                        parameter,
+                        writerCtx.config,
+                        writerCtx.evaluatedConfig
+                      )
+                      annotatedWriter[Field](parameter)
+                        .fold(resolveDirectionalWriter[Field](writerCtx.nest[Field]))(MIO.pure)
+                        .map { fieldWriter =>
+                          Expr.quote {
+                            Expr
+                              .splice(fieldWriter)
+                              .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
+                              .map(bson => reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
                           }
-                      }
-                      .map { elements =>
-                        val sequenced = elements.toList.foldRight(
-                          Expr.quote(
-                            scala.util.Success(List.empty[reactivemongo.api.bson.BSONElement]): Try[
-                              List[reactivemongo.api.bson.BSONElement]
-                            ]
-                          )
-                        ) { (next, tail) =>
-                          Expr.quote(for { head <- Expr.splice(next); rest <- Expr.splice(tail) } yield head :: rest)
                         }
-                        Expr.quote(Expr.splice(sequenced).map(values => BSONDocument(values*)))
+                    }
+                    val derivedFields = fieldValues match {
+                      case head :: tail => NonEmptyList(head, tail).parTraverse(deriveField).map(_.toList)
+                      case Nil          => MIO.pure(List.empty[Expr[Try[reactivemongo.api.bson.BSONElement]]])
+                    }
+                    derivedFields.map { elements =>
+                      val sequenced = elements.toList.foldRight(
+                        Expr.quote(
+                          scala.util.Success(List.empty[reactivemongo.api.bson.BSONElement]): Try[
+                            List[reactivemongo.api.bson.BSONElement]
+                          ]
+                        )
+                      ) { (next, tail) =>
+                        Expr.quote(for { head <- Expr.splice(next); rest <- Expr.splice(tail) } yield head :: rest)
                       }
+                      Expr.quote(Expr.splice(sequenced).map(values => BSONDocument(values*)))
+                    }
                   }
                 })
               }
@@ -567,8 +610,25 @@ trait BsonDocumentHandlerMacrosImpl
     Type[reactivemongo.api.bson.BSONWriter[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(writer)                                                         => MIO.pure(writer)
-      case Left(_) if !Type[A].isNamedTuple && Type[A].isInstanceOf[IsValueType] =>
+      case Right(writer)                     => MIO.pure(writer)
+      case Left(_) if isDirectionalOption[A] =>
+        Type[A] match {
+          case IsOption(option) =>
+            import option.Underlying as Inner
+            resolveDirectionalWriter[Inner](writerCtx.nest[Inner]).map { innerWriter =>
+              Expr.quote {
+                new reactivemongo.api.bson.BSONWriter[A] {
+                  def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] =
+                    value.asInstanceOf[Option[Inner]] match {
+                      case Some(inner) => Expr.splice(innerWriter).writeTry(inner)
+                      case None        => scala.util.Success(reactivemongo.api.bson.BSONNull)
+                    }
+                }
+              }
+            }
+          case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
+        }
+      case Left(_) if isDirectionalValueType[A] =>
         Type[A] match {
           case IsValueType(valueType) =>
             import valueType.Underlying as Inner
@@ -583,7 +643,7 @@ trait BsonDocumentHandlerMacrosImpl
             }
           case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
         }
-      case Left(reason) if CaseClass.parse[A].toEither.isRight =>
+      case Left(_) if CaseClass.parse[A].toEither.isRight =>
         implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
         implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
         deriveWriterBody[A](writerCtx) >> writerCtx.cache
