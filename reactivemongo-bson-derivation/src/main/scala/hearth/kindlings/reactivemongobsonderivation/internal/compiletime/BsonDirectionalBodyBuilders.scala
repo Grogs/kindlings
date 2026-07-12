@@ -15,7 +15,7 @@ import scala.util.Try
   */
 private[compiletime] trait BsonDirectionalBodyBuilders { this: BsonDocumentHandlerMacrosImpl & MacroCommons =>
 
-  protected final def deriveReaderBody[A: Type](readerCtx: ReaderCtx[A]): MIO[Unit] = {
+  final protected def deriveReaderBody[A: Type](readerCtx: ReaderCtx[A]): MIO[Unit] = {
     implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
     readerCtx.cache.get1Ary[BSONDocument, Try[A]]("cached-reader-body").flatMap {
@@ -28,7 +28,7 @@ private[compiletime] trait BsonDirectionalBodyBuilders { this: BsonDocumentHandl
     }
   }
 
-  protected final def deriveWriterBody[A: Type](writerCtx: WriterCtx[A]): MIO[Unit] = {
+  final protected def deriveWriterBody[A: Type](writerCtx: WriterCtx[A]): MIO[Unit] = {
     implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
     implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
     writerCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-writer-body").flatMap {

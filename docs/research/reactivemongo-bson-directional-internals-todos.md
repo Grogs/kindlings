@@ -31,5 +31,6 @@ This file tracks deliberate follow-up work introduced while implementing
   - Scala 2 reports an ambiguous `BSONReader` directly while `MacroSuite.compileErrors` is typechecking its nested
     source, before the suite can capture the diagnostic. Keep any eventual regression shared; do not move it to a
     Scala-3-only source set.
+  - Minimal shared reproducer: `reactivemongo-bson-ambiguous-implicit-macrosuite-reproducer.md`.
 - [x] User guide, feature parity, and research-document updates.
 - [x] Full JVM matrix, snippet tests, final code review, and cleanup.
