@@ -147,6 +147,40 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         WithExternalFlatten("external", ExternalFlattened(42))
       )
     }
+
+    test("reader applies optional, Scala, and annotation defaults independently") {
+      assertEquals(
+        KindlingsBsonDocumentReader.derived[MaybeName].readDocument(BSONDocument.empty).get,
+        MaybeName(None)
+      )
+      assertEquals(
+        KindlingsBsonDocumentReader.derived[WithDefault].readDocument(BSONDocument.empty).get,
+        WithDefault("unknown")
+      )
+      assertEquals(
+        KindlingsBsonDocumentReader.derived[WithAnnotatedDefaults].readDocument(BSONDocument("id" -> 1)).get,
+        WithAnnotatedDefaults(1, "anon", 0)
+      )
+    }
+
+    test("reader applies field naming and unexpected-field config independently") {
+      implicit val config: BsonDocumentHandlerConfig =
+        BsonDocumentHandlerConfig(skipUnexpectedFields = false).withSnakeCaseFieldNames
+      val reader = KindlingsBsonDocumentReader.derived[CamelCaseFields]
+
+      assertEquals(
+        reader.readDocument(BSONDocument("first_name" -> "Alice", "last_name" -> "Smith", "age_in_years" -> 30)).get,
+        CamelCaseFields("Alice", "Smith", 30)
+      )
+      assert(
+        reader
+          .readDocument(
+            BSONDocument("first_name" -> "Alice", "last_name" -> "Smith", "age_in_years" -> 30, "extra" -> 1)
+          )
+          .isFailure
+      )
+    }
+
   }
 
   group("standalone document writers") {
@@ -278,6 +312,17 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
       assertEquals(
         writer.writeTry(WithExternalFlatten("external", ExternalFlattened(42))).get,
         BSONDocument("name" -> "external", "externalValue" -> 42)
+      )
+    }
+
+    test("writer omits None unless @NoneAsNull is present") {
+      assertEquals(
+        KindlingsBsonDocumentWriter.derived[MaybeName].writeTry(MaybeName(None)).get,
+        BSONDocument.empty
+      )
+      assertEquals(
+        KindlingsBsonDocumentWriter.derived[MaybeAsNull].writeTry(MaybeAsNull(None)).get,
+        BSONDocument("name" -> BSONNull)
       )
     }
   }

@@ -20,7 +20,7 @@ This file tracks deliberate follow-up work introduced while implementing
 ## Remaining handoff scope
 
 - [x] Standalone `@Flatten` reader and writer derivation.
-- [ ] Remaining annotation/config parity (`NoneAsNull`, defaults, unexpected fields, custom naming).
+- [x] Remaining annotation/config parity (`NoneAsNull`, defaults, unexpected fields, custom naming).
 - [ ] Combined handler composition from the two lower-level directional algebras.
 - [ ] `parTuple` aggregation for independent combined failures.
 - [ ] Recursive ADT, ambiguity, policy, and asymmetric compile-error coverage.

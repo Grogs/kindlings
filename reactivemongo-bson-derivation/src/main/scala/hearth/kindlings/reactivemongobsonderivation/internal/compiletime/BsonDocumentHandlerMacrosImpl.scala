@@ -153,9 +153,15 @@ trait BsonDocumentHandlerMacrosImpl
       else None
     val annotationDefault = {
       val annotationType = Type.of[hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue[A]]
-      getAnnotationValueUntyped(param)(annotationType).map { value =>
-        Expr.quote(Expr.splice(value.asTyped[A]).asInstanceOf[A])
-      }
+      if (
+        hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.DefaultValue[A]](param)(
+          annotationType
+        )
+      )
+        getAnnotationValueUntyped(param)(annotationType).map { value =>
+          Expr.quote(Expr.splice(value.asTyped[A]).asInstanceOf[A])
+        }
+      else None
     }
     scalaDefault.orElse(annotationDefault)
   }
@@ -176,12 +182,20 @@ trait BsonDocumentHandlerMacrosImpl
       docExpr: Expr[reactivemongo.api.bson.BSONDocument],
       knownKeyExprs: List[Expr[String]],
       ctx: DerivationCtx[A]
+  )(implicit StringT: Type[String]): Expr[scala.util.Try[Unit]] =
+    buildUnexpectedFieldsCheck(docExpr, knownKeyExprs, ctx.config, ctx.evaluatedConfig)
+
+  private def buildUnexpectedFieldsCheck(
+      docExpr: Expr[reactivemongo.api.bson.BSONDocument],
+      knownKeyExprs: List[Expr[String]],
+      config: Expr[BsonDocumentHandlerConfig],
+      evaluatedConfig: Option[BsonDocumentHandlerConfig]
   )(implicit StringT: Type[String]): Expr[scala.util.Try[Unit]] = {
     val allLiteralKeys: Option[Set[String]] =
       knownKeyExprs.foldLeft(Option(Set.empty[String])) { (acc, expr) =>
         acc.flatMap(s => extractStringLiteral(expr).map(s + _))
       }
-    ctx.evaluatedConfig match {
+    evaluatedConfig match {
       case Some(evalCfg) if evalCfg.skipUnexpectedFields =>
         // Config fully evaluated at compile time and skipping is enabled - no-op
         Expr.quote(scala.util.Success(()): scala.util.Try[Unit])
@@ -191,7 +205,7 @@ trait BsonDocumentHandlerMacrosImpl
         val knownKeysExpr: Expr[scala.collection.immutable.Set[String]] = Expr(knownKeys)
         // Check the config at runtime to decide whether to skip
         Expr.quote {
-          if (Expr.splice(ctx.config).skipUnexpectedFields)
+          if (Expr.splice(config).skipUnexpectedFields)
             scala.util.Success(()): scala.util.Try[Unit]
           else {
             val unexpected = Expr.splice(docExpr).elements.map(_.name).toSet.diff(Expr.splice(knownKeysExpr))
@@ -216,7 +230,7 @@ trait BsonDocumentHandlerMacrosImpl
             }
         // Check the config at runtime to decide whether to skip
         Expr.quote {
-          if (Expr.splice(ctx.config).skipUnexpectedFields)
+          if (Expr.splice(config).skipUnexpectedFields)
             scala.util.Success(()): scala.util.Try[Unit]
           else {
             val known = Expr.splice(knownKeysSetExpr)
@@ -231,6 +245,13 @@ trait BsonDocumentHandlerMacrosImpl
         }
     }
   }
+
+  private def buildUnexpectedFieldsCheck[A](
+      docExpr: Expr[reactivemongo.api.bson.BSONDocument],
+      knownKeyExprs: List[Expr[String]],
+      ctx: ReaderCtx[A]
+  )(implicit StringT: Type[String]): Expr[scala.util.Try[Unit]] =
+    buildUnexpectedFieldsCheck(docExpr, knownKeyExprs, ctx.config, ctx.evaluatedConfig)
 
   // Entrypoints
 
@@ -308,6 +329,7 @@ trait BsonDocumentHandlerMacrosImpl
 
   private def deriveRecordReaderBody[A: Type](readerCtx: ReaderCtx[A]): MIO[Unit] = {
     implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    implicit val StringT: Type[String] = Types.String
     implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
     val key = "cached-reader-body"
     val builder = ValDefBuilder.ofDef1[BSONDocument, Try[A]](s"read_${Type[A].shortName}", "document")
@@ -320,6 +342,19 @@ trait BsonDocumentHandlerMacrosImpl
             case Left(reason)       => MIO.fail(new Exception(reason))
             case Right(constructor) =>
               val fields = constructor.parameters.flatten.toList
+              val knownKeys = fields.flatMap { case (name, parameter) =>
+                implicit val IgnoreT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
+                  Types.ignoreAnn
+                if (
+                  hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter) ||
+                  isDirectionalFlattened(parameter)
+                ) None
+                else
+                  Some(
+                    resolveDirectionalFieldKey(name, parameter, readerCtx.config, readerCtx.evaluatedConfig)
+                  )
+              }
+              val hasFlattenedField = fields.exists { case (_, parameter) => isDirectionalFlattened(parameter) }
               readerCtx.cache.forwardDeclare(key, builder) >> MIO.scoped { runSafe =>
                 runSafe(readerCtx.cache.buildCachedWith(key, builder) { case (_, document) =>
                   runSafe {
@@ -359,19 +394,7 @@ trait BsonDocumentHandlerMacrosImpl
                               }
                           }
                       } else {
-                        val key = resolveDirectionalFieldKey(
-                          name,
-                          parameter,
-                          readerCtx.config,
-                          readerCtx.evaluatedConfig
-                        )
-                        annotatedReader[Field](parameter)
-                          .fold(resolveDirectionalReader[Field](readerCtx.nest[Field]))(MIO.pure)
-                          .map { fieldReader =>
-                            name -> Expr.quote {
-                              Expr.splice(fieldReader).readTry(Expr.splice(document).get(Expr.splice(key)).get).get
-                            }.as_??
-                          }
+                        deriveDirectionalRecordField[Field](name, parameter, document, readerCtx.nest[Field])
                       }
                     }
                     val derivedFields = fields match {
@@ -386,13 +409,61 @@ trait BsonDocumentHandlerMacrosImpl
                         case Right(expr) => expr.value.asInstanceOf[Expr[A]]
                         case Left(error) => Environment.reportErrorAndAbort(error)
                       }
-                      Expr.quote(scala.util.Try(Expr.splice(construct)))
+                      val unexpectedFieldsCheck =
+                        if (hasFlattenedField) Expr.quote(scala.util.Success(()): scala.util.Try[Unit])
+                        else buildUnexpectedFieldsCheck(document, knownKeys, readerCtx)
+                      Expr.quote {
+                        Expr.splice(unexpectedFieldsCheck).flatMap { _ =>
+                          scala.util.Try(Expr.splice(construct))
+                        }
+                      }
                     }
                   }
                 })
               }
           }
     } yield ()
+  }
+
+  /** Keep `Field` as a real method type parameter. On Scala 2, constructing this expression in the local
+    * `parameter.tpe.Underlying` scope can leak the macro-only `parameter` path into generated code.
+    */
+  private def deriveDirectionalRecordField[Field: Type](
+      name: String,
+      parameter: Parameter,
+      document: Expr[BSONDocument],
+      readerCtx: ReaderCtx[Field]
+  ): MIO[(String, Expr_??)] = {
+    val key = resolveDirectionalFieldKey(name, parameter, readerCtx.config, readerCtx.evaluatedConfig)
+    annotatedReader[Field](parameter)
+      .fold(resolveDirectionalReader[Field](readerCtx))(MIO.pure)
+      .map { fieldReader =>
+        val defaultValue = directionalDefaultExpr[Field](parameter)
+        val readValue = defaultValue match {
+          case Some(defaultExpr) =>
+            Expr.quote {
+              Expr.splice(document).get(Expr.splice(key)) match {
+                case Some(value) => Expr.splice(fieldReader).readTry(value).get
+                case None        => Expr.splice(defaultExpr)
+              }
+            }
+          case None if isDirectionalOption[Field] =>
+            Expr.quote {
+              Expr.splice(document).get(Expr.splice(key)) match {
+                case Some(value) => Expr.splice(fieldReader).readTry(value).get
+                case None        => None.asInstanceOf[Field]
+              }
+            }
+          case None =>
+            Expr.quote {
+              Expr.splice(document).get(Expr.splice(key)) match {
+                case Some(value) => Expr.splice(fieldReader).readTry(value).get
+                case None        => throw new NoSuchElementException("Field not found")
+              }
+            }
+        }
+        name -> readValue.as_??
+      }
   }
 
   private def deriveEnumReaderBody[A: Type](enumm: Enum[A], readerCtx: ReaderCtx[A]): MIO[Unit] = {
@@ -781,12 +852,29 @@ trait BsonDocumentHandlerMacrosImpl
                         annotatedWriter[Field](parameter)
                           .fold(resolveDirectionalWriter[Field](writerCtx.nest[Field]))(MIO.pure)
                           .map { fieldWriter =>
-                            Expr.quote {
-                              Expr
-                                .splice(fieldWriter)
-                                .writeTry(Expr.splice(fieldValue.value.asInstanceOf[Expr[Field]]))
-                                .map(bson => List(reactivemongo.api.bson.BSONElement(Expr.splice(key), bson)))
-                            }
+                            val value = fieldValue.value.asInstanceOf[Expr[Field]]
+                            implicit val NoneAsNullT: Type[
+                              hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull
+                            ] = Types.noneAsNullAnn
+                            val noneAsNull = hasAnnotationType[
+                              hearth.kindlings.reactivemongobsonderivation.annotations.NoneAsNull
+                            ](parameter)
+                            if (isDirectionalOption[Field] && !noneAsNull)
+                              Expr.quote {
+                                Expr.splice(value).asInstanceOf[Option[Any]] match {
+                                  case None => scala.util.Success(Nil)
+                                  case _    =>
+                                    Expr.splice(fieldWriter).writeTry(Expr.splice(value)).map { bson =>
+                                      List(reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
+                                    }
+                                }
+                              }
+                            else
+                              Expr.quote {
+                                Expr.splice(fieldWriter).writeTry(Expr.splice(value)).map { bson =>
+                                  List(reactivemongo.api.bson.BSONElement(Expr.splice(key), bson))
+                                }
+                              }
                           }
                     }
                     val derivedFields = fieldValues match {
