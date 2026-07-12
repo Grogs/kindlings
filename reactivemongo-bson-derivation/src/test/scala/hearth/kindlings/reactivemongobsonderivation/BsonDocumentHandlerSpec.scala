@@ -772,7 +772,7 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
         )
       }
 
-      test("recursive structure (Tree)") {
+      test("combined handler round trips a recursive sealed ADT") {
         @scala.annotation.nowarn("msg=is never used|unused")
         val handler: KindlingsBsonDocumentHandler[Tree] = KindlingsBsonDocumentHandler.derived[Tree]
 
@@ -1445,6 +1445,34 @@ final class BsonDocumentHandlerSpec extends MacroSuite {
           KindlingsBsonDocumentHandler.derived[InvalidKeyMap]
           """
         ).check("Map key", "MissingKeyCodec", "requires a KeyReader", "requires a KeyWriter")
+      }
+
+      test("reader-only field reports the missing writer") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import reactivemongo.api.bson.{BSONReader, BSONString}
+
+          final class ReadOnlySecret
+          final case class ReadOnlyEnvelope(secret: ReadOnlySecret)
+          implicit val secretReader: BSONReader[ReadOnlySecret] = BSONReader.from(_ => scala.util.Success(new ReadOnlySecret))
+          KindlingsBsonDocumentHandler.derived[ReadOnlyEnvelope]
+          """
+        ).check("Cannot derive field", "ReadOnlySecret")
+      }
+
+      test("writer-only field reports the missing reader") {
+        compileErrors(
+          """
+          import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler
+          import reactivemongo.api.bson.{BSONString, BSONWriter}
+
+          final class WriteOnlySecret
+          final case class WriteOnlyEnvelope(secret: WriteOnlySecret)
+          implicit val secretWriter: BSONWriter[WriteOnlySecret] = BSONWriter.from(_ => scala.util.Success(BSONString("secret")))
+          KindlingsBsonDocumentHandler.derived[WriteOnlyEnvelope]
+          """
+        ).check("Cannot derive field", "WriteOnlySecret")
       }
 
       test("@Reader with the wrong field type fails derivation") {

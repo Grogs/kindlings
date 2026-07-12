@@ -1,13 +1,14 @@
 package hearth.kindlings.reactivemongobsonpolicytest
 
 import hearth.MacroSuite
-import reactivemongo.api.bson.BSONDocument
+import reactivemongo.api.bson.{BSONDocument, BSONDocumentHandler}
 
 final case class Allowed(value: Int)
 final case class Imported(value: String)
 final case class Denied(value: Long)
 final case class AllowedReader(value: Int)
 final case class AllowedWriter(value: Int)
+final case class DeniedWithExternal(value: Int)
 
 package allowed {
   object Instances {
@@ -38,6 +39,19 @@ final class DerivationPolicySpec extends MacroSuite {
 
     test("permits the opt-in import") {
       assertEquals(viaimport.Instances.handler.writeTry(Imported("x")).get, BSONDocument("value" -> "x"))
+    }
+
+    test("permits an explicit handler outside an approved scope") {
+      implicit val external: BSONDocumentHandler[DeniedWithExternal] = BSONDocumentHandler[DeniedWithExternal](
+        _ => DeniedWithExternal(-1),
+        _ => BSONDocument("external" -> true)
+      )
+
+      @scala.annotation.nowarn("msg=is never used|unused")
+      val handler =
+        hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentHandler.derived[DeniedWithExternal]
+      assertEquals(handler.readDocument(BSONDocument.empty).get, DeniedWithExternal(-1))
+      assertEquals(handler.writeTry(DeniedWithExternal(1)).get, BSONDocument("external" -> true))
     }
 
     test("denies an unapproved scope") {
