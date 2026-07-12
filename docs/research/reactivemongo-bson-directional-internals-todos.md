@@ -12,9 +12,9 @@ This file tracks deliberate follow-up work introduced while implementing
 
 ## Refactoring debt
 
-- [ ] Extract immutable enum discriminator metadata shared by reader and writer builders.
-- [ ] Move directional contexts and body builders out of `BsonDocumentHandlerMacrosImpl.scala`.
-- [ ] Replace duplicated record planning with a direction-parameterized structural planner where it remains readable.
+- [x] Extract immutable enum discriminator metadata shared by reader and writer builders.
+- [x] Move directional contexts and body builders out of `BsonDocumentHandlerMacrosImpl.scala`.
+- [x] Replace duplicated record planning with a direction-parameterized structural planner where it remains readable.
 - [x] Keep mutable `ValDefsCache` state strictly separate between directions.
 
 ## Remaining handoff scope
