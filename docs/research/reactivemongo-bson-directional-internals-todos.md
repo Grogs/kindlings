@@ -21,6 +21,7 @@ This file tracks deliberate follow-up work introduced while implementing
 
 - [x] Standalone `@Flatten` reader and writer derivation.
 - [x] Remaining annotation/config parity (`NoneAsNull`, defaults, unexpected fields, custom naming).
+- [x] Directional collection/map readers and writers, including directional map-key codecs.
 - [ ] Combined handler composition from the two lower-level directional algebras.
 - [ ] `parTuple` aggregation for independent combined failures.
 - [ ] Recursive ADT, ambiguity, policy, and asymmetric compile-error coverage.

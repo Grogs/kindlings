@@ -636,7 +636,14 @@ trait BsonDocumentHandlerMacrosImpl
     Type[reactivemongo.api.bson.BSONReader[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(reader)                     => MIO.pure(reader)
+      case Right(reader)                  => MIO.pure(reader)
+      case Left(_) if isDirectionalMap[A] =>
+        Type[A] match {
+          case IsMap(isMap) =>
+            import isMap.Underlying as Pair
+            deriveDirectionalMapReader[A, Pair](isMap.value, readerCtx)
+          case _ => MIO.fail(new Exception(s"Could not inspect map ${Type[A].prettyPrint}"))
+        }
       case Left(_) if isDirectionalOption[A] =>
         Type[A] match {
           case IsOption(option) =>
@@ -652,6 +659,13 @@ trait BsonDocumentHandlerMacrosImpl
               }
             }
           case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
+        }
+      case Left(_) if isDirectionalCollection[A] =>
+        Type[A] match {
+          case IsCollection(isCollection) =>
+            import isCollection.Underlying as Item
+            deriveDirectionalCollectionReader[A, Item](isCollection.value, readerCtx)
+          case _ => MIO.fail(new Exception(s"Could not inspect collection ${Type[A].prettyPrint}"))
         }
       case Left(_) if isDirectionalValueType[A] =>
         Type[A] match {
@@ -696,6 +710,161 @@ trait BsonDocumentHandlerMacrosImpl
           }
       case Left(reason) =>
         MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, reason))
+    }
+  }
+
+  /** Derive a BSON reader for a collection without requiring a writer for its items. */
+  private def deriveDirectionalCollectionReader[A: Type, Item: Type](
+      isCollection: IsCollectionOf[A, Item],
+      readerCtx: ReaderCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    implicit val BsonArrayT: Type[reactivemongo.api.bson.BSONArray] = Types.BsonArray
+    import isCollection.CtorResult
+    val factory = isCollection.factory
+    val build = isCollection.build
+    resolveDirectionalReader[Item](readerCtx.nest[Item]).map { itemReader =>
+      val readArray = directLambda[reactivemongo.api.bson.BSONArray, Try[A]] { array =>
+        val builder: Expr[scala.collection.mutable.Builder[Item, CtorResult]] = Expr.quote {
+          val result = Expr.splice(factory).newBuilder
+          val values = Expr.splice(array).values
+          var i = 0
+          while (i < values.length) {
+            result += Expr.splice(itemReader).readTry(values(i)).get
+            i += 1
+          }
+          result
+        }
+        directionalCollectionBuildResult[A](build, build.ctor(builder).asInstanceOf[Expr[Any]])
+      }
+      Expr.quote {
+        new reactivemongo.api.bson.BSONReader[A] {
+          def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
+            case array: reactivemongo.api.bson.BSONArray => Expr.splice(readArray).apply(array)
+            case other => scala.util.Failure(new IllegalArgumentException("Expected BSONArray, got " + other))
+          }
+        }
+      }
+    }
+  }
+
+  private def directionalCollectionBuildResult[A: Type](
+      build: CtorLikeOf[?, A],
+      result: Expr[Any]
+  )(implicit TryAT: Type[Try[A]]): Expr[Try[A]] = build match {
+    case _: CtorLikeOf.PlainValue[?, ?] =>
+      Expr.quote(scala.util.Try(Expr.splice(result).asInstanceOf[A]))
+    case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
+      val either = result.asInstanceOf[Expr[Either[String, A]]]
+      Expr.quote {
+        Expr.splice(either) match {
+          case Right(value)  => scala.util.Success(value)
+          case Left(message) => scala.util.Failure(new IllegalArgumentException(message))
+        }
+      }
+    case _: CtorLikeOf.EitherThrowableOrValue[?, ?] =>
+      val either = result.asInstanceOf[Expr[Either[Throwable, A]]]
+      Expr.quote(Expr.splice(either).fold(scala.util.Failure(_), scala.util.Success(_)))
+    case _: CtorLikeOf.EitherIterableStringOrValue[?, ?] =>
+      val either = result.asInstanceOf[Expr[Either[Iterable[String], A]]]
+      Expr.quote {
+        Expr
+          .splice(either)
+          .fold(
+            messages => scala.util.Failure(new IllegalArgumentException(messages.mkString(", "))),
+            scala.util.Success(_)
+          )
+      }
+    case _: CtorLikeOf.EitherIterableThrowableOrValue[?, ?] =>
+      val either = result.asInstanceOf[Expr[Either[Iterable[Throwable], A]]]
+      Expr.quote {
+        Expr
+          .splice(either)
+          .fold(
+            errors => scala.util.Failure(errors.headOption.getOrElse(new RuntimeException("unknown"))),
+            scala.util.Success(_)
+          )
+      }
+  }
+
+  private def isDirectionalMap[A: Type]: Boolean = Type[A] match {
+    case IsMap(_) => true
+    case _        => false
+  }
+
+  private def isDirectionalCollection[A: Type]: Boolean = Type[A] match {
+    case IsCollection(_) => true
+    case _               => false
+  }
+
+  /** Derive a BSON reader for a map without requiring a writer for its values. */
+  private def deriveDirectionalMapReader[A: Type, Pair: Type](
+      isMap: IsMapOf[A, Pair],
+      readerCtx: ReaderCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    implicit val StringT: Type[String] = Types.String
+    implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+    import isMap.{CtorResult, Key, Value}
+    implicit val KeyReaderT: Type[reactivemongo.api.bson.KeyReader[Key]] = Types.KeyReader[Key]
+    val keyReader = Type[reactivemongo.api.bson.KeyReader[Key]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toOption
+    if (!(Type[Key] =:= Type[String]) && keyReader.isEmpty)
+      MIO.fail(
+        BsonDocumentHandlerDerivationError.CannotDeriveCollection(
+          Type[A].prettyPrint,
+          s"Map key ${Type[Key].prettyPrint} requires a KeyReader"
+        )
+      )
+    else {
+      val factory = isMap.factory
+      val build = isMap.build
+      resolveDirectionalReader[Value](readerCtx.nest[Value]).map { valueReader =>
+        val readDocument = directLambda[BSONDocument, Try[A]] { document =>
+          val builder: Expr[scala.collection.mutable.Builder[Pair, CtorResult]] = keyReader match {
+            case Some(reader) =>
+              Expr.quote {
+                val result = Expr.splice(factory).newBuilder
+                val elements = Expr.splice(document).elements.iterator
+                while (elements.hasNext) {
+                  val element = elements.next()
+                  result += Expr.splice(
+                    isMap.pair(
+                      Expr.quote(Expr.splice(reader).readTry(element.name).get),
+                      Expr.quote(Expr.splice(valueReader).readTry(element.value).get)
+                    )
+                  )
+                }
+                result
+              }
+            case None =>
+              Expr.quote {
+                val result = Expr.splice(factory).newBuilder
+                val elements = Expr.splice(document).elements.iterator
+                while (elements.hasNext) {
+                  val element = elements.next()
+                  result += Expr.splice(
+                    isMap.pair(
+                      Expr.quote(element.name.asInstanceOf[Key]),
+                      Expr.quote(Expr.splice(valueReader).readTry(element.value).get)
+                    )
+                  )
+                }
+                result
+              }
+          }
+          directionalCollectionBuildResult[A](build, build.ctor(builder).asInstanceOf[Expr[Any]])
+        }
+        Expr.quote {
+          new reactivemongo.api.bson.BSONReader[A] {
+            def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
+              case document: BSONDocument => Expr.splice(readDocument).apply(document)
+              case other => scala.util.Failure(new IllegalArgumentException("Expected BSONDocument, got " + other))
+            }
+          }
+        }
+      }
     }
   }
 
@@ -1025,7 +1194,14 @@ trait BsonDocumentHandlerMacrosImpl
     Type[reactivemongo.api.bson.BSONWriter[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(writer)                     => MIO.pure(writer)
+      case Right(writer)                  => MIO.pure(writer)
+      case Left(_) if isDirectionalMap[A] =>
+        Type[A] match {
+          case IsMap(isMap) =>
+            import isMap.Underlying as Pair
+            deriveDirectionalMapWriter[A, Pair](isMap.value, writerCtx)
+          case _ => MIO.fail(new Exception(s"Could not inspect map ${Type[A].prettyPrint}"))
+        }
       case Left(_) if isDirectionalOption[A] =>
         Type[A] match {
           case IsOption(option) =>
@@ -1042,6 +1218,13 @@ trait BsonDocumentHandlerMacrosImpl
               }
             }
           case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
+        }
+      case Left(_) if isDirectionalCollection[A] =>
+        Type[A] match {
+          case IsCollection(isCollection) =>
+            import isCollection.Underlying as Item
+            deriveDirectionalCollectionWriter[A, Item](isCollection.value, writerCtx)
+          case _ => MIO.fail(new Exception(s"Could not inspect collection ${Type[A].prettyPrint}"))
         }
       case Left(_) if isDirectionalValueType[A] =>
         Type[A] match {
@@ -1070,6 +1253,102 @@ trait BsonDocumentHandlerMacrosImpl
       case Left(reason) =>
         MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, reason))
     }
+  }
+
+  /** Derive a BSON writer for a collection without requiring a reader for its items. */
+  private def deriveDirectionalCollectionWriter[A: Type, Item: Type](
+      isCollection: IsCollectionOf[A, Item],
+      writerCtx: WriterCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
+    implicit val TryBsonValueT: Type[Try[reactivemongo.api.bson.BSONValue]] =
+      Types.TryCtor[reactivemongo.api.bson.BSONValue]
+    resolveDirectionalWriter[Item](writerCtx.nest[Item]).map { itemWriter =>
+      val writeCollection = directLambda[A, Try[reactivemongo.api.bson.BSONValue]] { value =>
+        Expr.quote {
+          scala.util.Try {
+            val values = Expr.splice(isCollection.asIterable(value)).asInstanceOf[Iterable[Item]]
+            val result = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONValue]
+            val iterator = values.iterator
+            while (iterator.hasNext)
+              result += Expr.splice(itemWriter).writeTry(iterator.next()).get
+            reactivemongo.api.bson.BSONArray(result.toList): reactivemongo.api.bson.BSONValue
+          }
+        }
+      }
+      Expr.quote {
+        new reactivemongo.api.bson.BSONWriter[A] {
+          def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] = Expr.splice(writeCollection).apply(value)
+        }
+      }
+    }
+  }
+
+  /** Derive a BSON writer for a map without requiring a reader for its values. */
+  private def deriveDirectionalMapWriter[A: Type, Pair: Type](
+      isMap: IsMapOf[A, Pair],
+      writerCtx: WriterCtx[A]
+  ): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    implicit val StringT: Type[String] = Types.String
+    implicit val BsonValueT: Type[reactivemongo.api.bson.BSONValue] = Types.BsonValue
+    implicit val TryBsonValueT: Type[Try[reactivemongo.api.bson.BSONValue]] =
+      Types.TryCtor[reactivemongo.api.bson.BSONValue]
+    import isMap.{Key, Value}
+    implicit val KeyWriterT: Type[reactivemongo.api.bson.KeyWriter[Key]] = Types.KeyWriter[Key]
+    val keyWriter = Type[reactivemongo.api.bson.KeyWriter[Key]]
+      .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+      .toOption
+    if (!(Type[Key] =:= Type[String]) && keyWriter.isEmpty)
+      MIO.fail(
+        BsonDocumentHandlerDerivationError.CannotDeriveCollection(
+          Type[A].prettyPrint,
+          s"Map key ${Type[Key].prettyPrint} requires a KeyWriter"
+        )
+      )
+    else
+      resolveDirectionalWriter[Value](writerCtx.nest[Value]).map { valueWriter =>
+        val writeMap = directLambda[A, Try[reactivemongo.api.bson.BSONValue]] { value =>
+          keyWriter match {
+            case Some(writer) =>
+              Expr.quote {
+                scala.util.Try {
+                  val pairs = Expr.splice(isMap.asIterable(value)).asInstanceOf[Iterable[(Key, Value)]]
+                  val elements = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONElement]
+                  val iterator = pairs.iterator
+                  while (iterator.hasNext) {
+                    val pair = iterator.next()
+                    elements += reactivemongo.api.bson.BSONElement(
+                      Expr.splice(writer).writeTry(pair._1).get,
+                      Expr.splice(valueWriter).writeTry(pair._2).get
+                    )
+                  }
+                  BSONDocument(elements.toList*): reactivemongo.api.bson.BSONValue
+                }
+              }
+            case None =>
+              Expr.quote {
+                scala.util.Try {
+                  val pairs = Expr.splice(isMap.asIterable(value)).asInstanceOf[Iterable[(Key, Value)]]
+                  val elements = scala.collection.mutable.ListBuffer.empty[reactivemongo.api.bson.BSONElement]
+                  val iterator = pairs.iterator
+                  while (iterator.hasNext) {
+                    val pair = iterator.next()
+                    elements += reactivemongo.api.bson.BSONElement(
+                      pair._1.asInstanceOf[String],
+                      Expr.splice(valueWriter).writeTry(pair._2).get
+                    )
+                  }
+                  BSONDocument(elements.toList*): reactivemongo.api.bson.BSONValue
+                }
+              }
+          }
+        }
+        Expr.quote {
+          new reactivemongo.api.bson.BSONWriter[A] {
+            def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] = Expr.splice(writeMap).apply(value)
+          }
+        }
+      }
   }
 
   /** Inline write entry point. Structural handlers expose their write body as a cached named def, so this expansion
@@ -1131,10 +1410,7 @@ trait BsonDocumentHandlerMacrosImpl
       configExpr: Expr[BsonDocumentHandlerConfig]
   ): Expr[KindlingsBsonDocumentHandler[A]] = {
     val selfType: Option[??] = Some(Type[A].as_??)
-    // semiEval now works for common configs because fieldNaming/typeNaming are sealed traits.
-    // It falls back to None when the config contains custom function variants (FieldNaming.Custom / TypeNaming.Custom).
-    val evaluatedConfig: Option[BsonDocumentHandlerConfig] = configExpr.semiEval.toOption
-
+    val evaluatedConfig = configExpr.semiEval.toOption
     if (Type[A] =:= Type.of[Nothing].asInstanceOf[Type[A]] || Type[A] =:= Type.of[Any].asInstanceOf[Type[A]])
       Environment.reportErrorAndAbort(
         s"KindlingsBsonDocumentHandler.derived: type parameter was inferred as ${Type[A].prettyPrint}, which is likely unintended.\n" +
@@ -1147,7 +1423,7 @@ trait BsonDocumentHandlerMacrosImpl
         s"Deriving BSONDocumentHandler for ${Type[A].prettyPrint} at: ${Environment.currentPosition.prettyPrint}"
       ) {
         MIO.scoped { runSafe =>
-          val fromCtx: (DerivationCtx[A] => Expr[KindlingsBsonDocumentHandler[A]]) = (ctx: DerivationCtx[A]) =>
+          val fromCtx: DerivationCtx[A] => Expr[KindlingsBsonDocumentHandler[A]] = ctx =>
             runSafe {
               for {
                 _ <- ensureStandardExtensionsLoaded()
@@ -1155,18 +1431,10 @@ trait BsonDocumentHandlerMacrosImpl
                 cache <- ctx.cache.get
               } yield cache.toValDefs.use(_ => result)
             }
-
-          val ctx = DerivationCtx.from[A](
-            derivedType = selfType,
-            config = configExpr,
-            evaluatedConfig = evaluatedConfig
-          )
-          fromCtx(ctx)
+          fromCtx(DerivationCtx.from[A](selfType, configExpr, evaluatedConfig))
         }
       }
-      .flatTap { result =>
-        Log.info(s"Derived final result for: ${result.prettyPrint}")
-      }
+      .flatTap(result => Log.info(s"Derived final result for: ${result.prettyPrint}"))
       .runToExprOrFail(
         "KindlingsBsonDocumentHandler.derived",
         infoRendering = if (shouldWeLogDerivation) RenderFrom(Log.Level.Info) else DontRender,
@@ -1174,10 +1442,10 @@ trait BsonDocumentHandlerMacrosImpl
         timeout = derivationTimeout
       ) { (errorLogs, errors) =>
         val errorsRendered = errors
-          .map { e =>
-            e.getMessage.split("\n").toList match {
+          .map { error =>
+            error.getMessage.split("\n").toList match {
               case head :: tail => (("  - " + head) :: tail.map("    " + _)).mkString("\n")
-              case _            => "  - " + e.getMessage
+              case _            => "  - " + error.getMessage
             }
           }
           .mkString("\n")
