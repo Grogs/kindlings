@@ -32,4 +32,4 @@ This file tracks deliberate follow-up work introduced while implementing
     source, before the suite can capture the diagnostic. Keep any eventual regression shared; do not move it to a
     Scala-3-only source set.
 - [x] User guide, feature parity, and research-document updates.
-- [ ] Full JVM matrix, snippet tests, final code review, and cleanup.
+- [x] Full JVM matrix, snippet tests, final code review, and cleanup.
