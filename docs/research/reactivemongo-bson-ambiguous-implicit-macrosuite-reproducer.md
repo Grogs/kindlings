@@ -1,14 +1,15 @@
 # Scala 2 `MacroSuite.compileErrors` cannot capture ambiguous BSON field codecs
 
-## Summary
+## Status
 
-The shared ReactiveMongo BSON derivation suite cannot currently assert the diagnostic for an ambiguous user-provided
-`BSONReader` (and, symmetrically, a `BSONWriter`) on Scala 2.13. `MacroSuite.compileErrors` receives a source string,
-but Scala 2 reports the ambiguous implicit while typechecking the nested source before the suite can turn that
-diagnostic into its assertion result.
+This is a candidate upstream Hearth issue. The shared ReactiveMongo BSON derivation suite cannot currently assert the
+diagnostic for an ambiguous user-provided `BSONReader` or `BSONWriter` on Scala 2.13. `MacroSuite.compileErrors`
+receives a source string, but Scala 2 reports the ambiguous implicit while typechecking the nested source before the
+suite can turn that diagnostic into its assertion result.
 
 This is a test-harness limitation, not a derivation result: ordinary Scala compilation correctly rejects the
-ambiguity, and Scala 3 can capture it through `compileErrors`.
+ambiguity. Separate reader and writer regression tests are retained in the Scala 3 suite, where `compileErrors` can
+capture the diagnostics.
 
 ## Minimal shared source
 
@@ -40,12 +41,35 @@ Scala 2.13 fails compilation of the test suite itself with:
 
 The location points at the nested source processed by `compileErrors`; no MUnit assertion is run.
 
-## Scope and expected fix direction
+## Proposed Hearth issue
 
-Keep this case cross-compiled. Moving it into `src/test/scala-3` would conceal the Scala 2 limitation rather than
-testing it. The appropriate fix is in the Scala 2 implementation of Hearth's `MacroSuite.compileErrors`: it needs to
-compile the supplied source under a diagnostic-capturing boundary that includes implicit search/typechecking, not only
-macro-abort diagnostics.
+### Suggested title
 
-Until that exists, the regular shared suite covers reader-only and writer-only derivation failures, while this
-document preserves the exact failing shared regression input for Hearth/MacroSuite work.
+Scala 2 `MacroSuite.compileErrors` does not capture ambiguous implicit diagnostics from nested source
+
+### Expected behavior
+
+`MacroSuite.compileErrors(source)` should return the ambiguous-implicit diagnostic so that `.check(...)` can assert
+it, as it does on Scala 3.
+
+### Actual behavior
+
+On Scala 2.13, the ambiguous implicit is reported while the nested source is being typechecked. It escapes the
+diagnostic-capturing boundary and fails compilation of the test suite itself, so no MUnit assertion runs.
+
+### Expected fix direction
+
+The Scala 2 implementation of Hearth's `MacroSuite.compileErrors` should compile the supplied source under a
+diagnostic-capturing boundary that includes implicit search and typechecking, not only macro-abort diagnostics. The
+minimal source above should become a Hearth regression test without any Kindlings or ReactiveMongo dependency; plain
+local type classes and two competing implicit values are sufficient.
+
+## Kindlings follow-up
+
+Once a fixed Hearth version is available, add separate ambiguous-reader and ambiguous-writer assertions to the shared
+`BsonDocumentHandlerSpec` and remove their Scala-3-only counterparts. Until then:
+
+- ordinary compilation rejects both ambiguities correctly;
+- Scala 3 has executable regression coverage for both directions;
+- the shared suite covers reader-only and writer-only missing-codec failures; and
+- this document preserves the exact Scala 2 reproducer and the material for the upstream issue.

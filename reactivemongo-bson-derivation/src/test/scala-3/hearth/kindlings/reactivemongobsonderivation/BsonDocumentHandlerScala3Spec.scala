@@ -93,4 +93,41 @@ final class BsonDocumentHandlerScala3Spec extends MacroSuite {
       assertEquals(handler.readDocument(document).get, value)
     }
   }
+
+  group("compile-time errors") {
+
+    test("ambiguous field readers fail derivation") {
+      compileErrors(
+        """
+        import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentReader
+        import reactivemongo.api.bson.BSONReader
+
+        final class AmbiguousReaderSecret
+        final case class AmbiguousReaderEnvelope(secret: AmbiguousReaderSecret)
+        implicit val firstReader: BSONReader[AmbiguousReaderSecret] =
+          BSONReader.from(_ => scala.util.Success(new AmbiguousReaderSecret))
+        implicit val secondReader: BSONReader[AmbiguousReaderSecret] =
+          BSONReader.from(_ => scala.util.Success(new AmbiguousReaderSecret))
+        KindlingsBsonDocumentReader.derived[AmbiguousReaderEnvelope]
+        """
+      ).check("Ambiguous implicit")
+    }
+
+    test("ambiguous field writers fail derivation") {
+      compileErrors(
+        """
+        import hearth.kindlings.reactivemongobsonderivation.KindlingsBsonDocumentWriter
+        import reactivemongo.api.bson.{BSONString, BSONWriter}
+
+        final class AmbiguousWriterSecret
+        final case class AmbiguousWriterEnvelope(secret: AmbiguousWriterSecret)
+        implicit val firstWriter: BSONWriter[AmbiguousWriterSecret] =
+          BSONWriter.from(_ => scala.util.Success(BSONString("first")))
+        implicit val secondWriter: BSONWriter[AmbiguousWriterSecret] =
+          BSONWriter.from(_ => scala.util.Success(BSONString("second")))
+        KindlingsBsonDocumentWriter.derived[AmbiguousWriterEnvelope]
+        """
+      ).check("Ambiguous implicit")
+    }
+  }
 }
