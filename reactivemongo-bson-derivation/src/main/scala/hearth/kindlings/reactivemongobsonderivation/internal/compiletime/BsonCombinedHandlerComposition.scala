@@ -10,12 +10,7 @@ import reactivemongo.api.bson.BSONDocument
 
 import scala.util.Try
 
-/** Chooses and assembles the implementation behind the combined document-handler API.
-  *
-  * Structural records and enums compose the independent directional algebras. Root shapes whose public wire format is
-  * defined by the original handler rules remain on the compatibility path until those directional algebras expose the
-  * same document-level semantics.
-  */
+/** Assembles the combined document-handler API from the two independent directional algebras. */
 private[compiletime] trait BsonCombinedHandlerComposition {
   this: BsonDocumentHandlerMacrosImpl & MacroCommons & StdExtensions =>
 
@@ -24,14 +19,24 @@ private[compiletime] trait BsonCombinedHandlerComposition {
       configExpr: Expr[BsonDocumentHandlerConfig],
       evaluatedConfig: Option[BsonDocumentHandlerConfig]
   ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] =
-    if (canComposeDirectionalHandler[A](derivedType))
-      composeDirectionalHandler[A](configExpr, evaluatedConfig)
-    else deriveCompatibilityHandler[A](derivedType, configExpr, evaluatedConfig)
+    rootExternalHandler[A](derivedType) match {
+      case Some(parent) =>
+        MIO.pure(Expr.quote {
+          hearth.kindlings.reactivemongobsonderivation.internal.runtime.BsonDocumentHandlerFactories
+            .handlerInstance[A](
+              (document: BSONDocument) => Expr.splice(parent).readDocument(document),
+              (value: A) => Expr.splice(parent).writeTry(value)
+            )
+        })
+      case None => composeDirectionalHandler[A](configExpr, evaluatedConfig)
+    }
 
-  /** An explicit parent handler is always the root override. Collection-like and wrapper roots retain their established
-    * document envelope, whereas records and enums have identical directional and combined wire formats.
+  /** An explicit parent handler remains the unconditional root override. Skip the Kindlings value currently being
+    * initialized by a Scala 3 `derives` expansion.
     */
-  private def canComposeDirectionalHandler[A: Type](derivedType: Option[??]): Boolean = {
+  private def rootExternalHandler[A: Type](
+      derivedType: Option[??]
+  ): Option[Expr[reactivemongo.api.bson.BSONDocumentHandler[A]]] = {
     implicit val HandlerA: Type[KindlingsBsonDocumentHandler[A]] = Types.BsonDocumentHandler[A]
     implicit val ParentHandlerA: Type[reactivemongo.api.bson.BSONDocumentHandler[A]] =
       Types.ExternalBsonDocumentHandler[A]
@@ -41,15 +46,11 @@ private[compiletime] trait BsonCombinedHandlerComposition {
           .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
           .toOption
           .nonEmpty
-    val hasExternalHandler =
-      !rootHasKindlingsHandler &&
-        Type[reactivemongo.api.bson.BSONDocumentHandler[A]]
-          .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
-          .toOption
-          .nonEmpty
-
-    !hasExternalHandler && !isDirectionalOption[A] && !isDirectionalMap[A] && !isDirectionalCollection[A] &&
-    !isDirectionalValueType[A] && !Type[A].isNamedTuple && isCaseClassOrEnum[A]
+    if (rootHasKindlingsHandler) None
+    else
+      Type[reactivemongo.api.bson.BSONDocumentHandler[A]]
+        .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
+        .toOption
   }
 
   /** Derives both bodies at the outer quote scope. Separate caches permit `parTuple` error aggregation and keep each
@@ -89,19 +90,4 @@ private[compiletime] trait BsonCombinedHandlerComposition {
         Environment.reportErrorAndAbort(s"No directional BSON document body generated for ${Type[A].prettyPrint}")
     }
   }
-
-  private def deriveCompatibilityHandler[A: Type](
-      derivedType: Option[??],
-      configExpr: Expr[BsonDocumentHandlerConfig],
-      evaluatedConfig: Option[BsonDocumentHandlerConfig]
-  ): MIO[Expr[KindlingsBsonDocumentHandler[A]]] = {
-    val compatibilityCtx = DerivationCtx.from[A](derivedType, configExpr, evaluatedConfig)
-    for {
-      result <- deriveResultRecursively[A](using compatibilityCtx)
-      cache <- compatibilityCtx.cache.get
-    } yield cache.toValDefs.use(_ => result)
-  }
-
-  final protected def isCaseClassOrEnum[A: Type]: Boolean =
-    CaseClass.parse[A].toEither.isRight || Enum.parse[A].toEither.isRight
 }

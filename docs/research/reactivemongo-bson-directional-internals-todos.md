@@ -23,8 +23,8 @@ This file tracks deliberate follow-up work introduced while implementing
 - [x] Remaining annotation/config parity (`NoneAsNull`, defaults, unexpected fields, custom naming).
 - [x] Directional collection/map readers and writers, including directional map-key codecs.
 - [x] Combined handler composition from the two lower-level directional algebras.
-  - Structural composition is selected only after standard extensions load, preserving the legacy path for `Option`,
-    `Map`, collections, value types, named tuples, and explicit root handlers.
+  - Directional document-body adapters preserve the established root wire formats for `Option`, `Map`, collections,
+    value types, and named tuples; explicit root handlers retain precedence.
 - [x] `parTuple` aggregation for independent combined failures.
 - [x] Recursive ADT, policy, and asymmetric compile-error coverage.
 - [ ] Ambiguous implicit compile-error coverage.

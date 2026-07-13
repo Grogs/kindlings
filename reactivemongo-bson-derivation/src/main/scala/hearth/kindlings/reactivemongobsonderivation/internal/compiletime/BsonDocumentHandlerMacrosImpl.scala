@@ -21,16 +21,12 @@ trait BsonDocumentHandlerMacrosImpl
     with hearth.kindlings.derivation.compiletime.DerivationPolicy
     with hearth.kindlings.derivation.compiletime.LoadStandardExtensionsOnce
     with hearth.kindlings.derivation.compiletime.MethodFolds
-    with BsonCodecResolution
-    with BsonCaseClassDerivation
-    with BsonEnumDerivation
-    with BsonCollectionDerivation
+    with BsonDirectionalCodecSupport
     with BsonDirectionalInfrastructure
     with BsonDirectionalBodyBuilders
     with BsonDirectionalReaderDerivation
     with BsonDirectionalWriterDerivation
-    with BsonCombinedHandlerComposition
-    with BsonCompatibilityHandlerDerivation {
+    with BsonCombinedHandlerComposition {
   this: MacroCommons & StdExtensions & AnnotationSupport =>
 
   override protected def derivationSettingsNamespace: String = "reactivemongoBsonDerivation"
@@ -95,37 +91,6 @@ trait BsonDocumentHandlerMacrosImpl
 
   // Field name resolution
 
-  /** Build the BSON key expression for a field, applying the `@FieldName` annotation and the config's `fieldNameMapper`
-    * (at compile time if available, runtime otherwise).
-    */
-  protected def resolveFieldKeyExpr[A](
-      fieldName: String,
-      param: Parameter,
-      ctx: DerivationCtx[A]
-  ): Expr[String] = {
-    implicit val fnt: Type[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName] = Types.fieldNameAnn
-    val annotationOverride: Option[String] =
-      getAnnotationStringArg[hearth.kindlings.reactivemongobsonderivation.annotations.FieldName](param)
-
-    annotationOverride match {
-      case Some(name) =>
-        // @fieldName annotation takes precedence - use as-is
-        Expr(name)
-      case None =>
-        // Apply config's fieldNameMapper
-        ctx.evaluatedConfig match {
-          case Some(evalCfg) =>
-            // semiEval succeeded - apply mapper at compile time
-            Expr(evalCfg.fieldNameMapper(fieldName))
-          case None =>
-            // semiEval failed - splice config at runtime
-            Expr.quote {
-              Expr.splice(ctx.config).fieldNameMapper(Expr.splice(Expr(fieldName)))
-            }
-        }
-    }
-  }
-
   protected def resolveDirectionalFieldKey(
       fieldName: String,
       param: Parameter,
@@ -183,13 +148,6 @@ trait BsonDocumentHandlerMacrosImpl
     * If all known keys are compile-time string literals and `skipUnexpectedFields=false`, we pre-compute the known set
     * at compile time. Otherwise, we fall back to a no-op (skipUnexpectedFields=true is the safe default).
     */
-  protected def buildUnexpectedFieldsCheck[A](
-      docExpr: Expr[reactivemongo.api.bson.BSONDocument],
-      knownKeyExprs: List[Expr[String]],
-      ctx: DerivationCtx[A]
-  )(implicit StringT: Type[String]): Expr[scala.util.Try[Unit]] =
-    buildUnexpectedFieldsCheck(docExpr, knownKeyExprs, ctx.config, ctx.evaluatedConfig)
-
   private def buildUnexpectedFieldsCheck(
       docExpr: Expr[reactivemongo.api.bson.BSONDocument],
       knownKeyExprs: List[Expr[String]],
@@ -363,20 +321,14 @@ trait BsonDocumentHandlerMacrosImpl
         Log
           .namedScope(s"Deriving inline BSON writer for ${Type[A].prettyPrint}") {
             MIO.scoped { runSafe =>
-              val derivationCtx = DerivationCtx.from[A](
-                derivedType = None,
-                config = configExpr,
-                evaluatedConfig = evaluatedConfig,
-                writeOnly = true
-              )
+              val writerCtx = WriterCtx.from[A](configExpr, evaluatedConfig)
               runSafe {
                 for {
                   _ <- ensureStandardExtensionsLoaded()
-                  // Derive the root rule body directly: `deriveResultRecursively` would additionally emit the
-                  // handler helper used by `derived`, which is deliberately absent from an inline expansion.
-                  _ <- deriveResultRecursivelyViaRules[A](using derivationCtx)
-                  writeCaller <- derivationCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-write-body")
-                  cache <- derivationCtx.cache.get
+                  _ <- checkDerivationPolicyOncePerExpansion(Type[A].prettyPrint)
+                  _ <- deriveWriterBody[A](writerCtx)
+                  writeCaller <- writerCtx.cache.get1Ary[A, Try[BSONDocument]]("cached-writer-body")
+                  cache <- writerCtx.cache.get
                 } yield writeCaller match {
                   case Some(call) => cache.toValDefs.use(_ => call(valueExpr))
                   case None       =>

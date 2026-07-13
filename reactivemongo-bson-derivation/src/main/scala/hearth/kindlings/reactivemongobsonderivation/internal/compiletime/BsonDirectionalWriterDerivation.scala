@@ -302,65 +302,73 @@ private[compiletime] trait BsonDirectionalWriterDerivation {
     Type[reactivemongo.api.bson.BSONWriter[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(writer)                  => MIO.pure(writer)
-      case Left(_) if isDirectionalMap[A] =>
-        Type[A] match {
-          case IsMap(isMap) =>
-            import isMap.Underlying as Pair
-            deriveDirectionalMapWriter[A, Pair](isMap.value, writerCtx)
-          case _ => MIO.fail(new Exception(s"Could not inspect map ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalOption[A] =>
-        Type[A] match {
-          case IsOption(option) =>
-            import option.Underlying as Inner
-            resolveDirectionalWriter[Inner](writerCtx.nest[Inner]).map { innerWriter =>
-              Expr.quote {
-                new reactivemongo.api.bson.BSONWriter[A] {
-                  def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] =
-                    value.asInstanceOf[Option[Inner]] match {
-                      case Some(inner) => Expr.splice(innerWriter).writeTry(inner)
-                      case None        => scala.util.Success(reactivemongo.api.bson.BSONNull)
-                    }
-                }
-              }
-            }
-          case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalCollection[A] =>
-        Type[A] match {
-          case IsCollection(isCollection) =>
-            import isCollection.Underlying as Item
-            deriveDirectionalCollectionWriter[A, Item](isCollection.value, writerCtx)
-          case _ => MIO.fail(new Exception(s"Could not inspect collection ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalValueType[A] =>
-        Type[A] match {
-          case IsValueType(valueType) =>
-            import valueType.Underlying as Inner
-            resolveDirectionalWriter[Inner](writerCtx.nest[Inner]).map { innerWriter =>
-              val unwrap = directLambda[A, Inner](valueType.value.unwrap)
-              Expr.quote {
-                new reactivemongo.api.bson.BSONWriter[A] {
-                  def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] =
-                    Expr.splice(innerWriter).writeTry(Expr.splice(unwrap).apply(value))
-                }
-              }
-            }
-          case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalRecord[A] || Enum.parse[A].toEither.isRight =>
-        implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
-        implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
-        deriveWriterBody[A](writerCtx) >> writerCtx.cache
-          .get1Ary[A, Try[BSONDocument]]("cached-writer-body")
-          .flatMap {
-            case Some(call) => MIO.pure(writerFromDocumentWrite[A](call))
-            case None       => MIO.fail(new Exception(s"No cached writer body for ${Type[A].prettyPrint}"))
-          }
-      case Left(reason) =>
-        MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, reason))
+      case Right(writer) => MIO.pure(writer)
+      case Left(reason)  => deriveDirectionalWriterStructurally[A](writerCtx, reason)
     }
+  }
+
+  protected def deriveDirectionalWriterStructurally[A: Type](
+      writerCtx: WriterCtx[A],
+      implicitFailure: String = "No BSONWriter found"
+  ): MIO[Expr[reactivemongo.api.bson.BSONWriter[A]]] = {
+    implicit val WriterA: Type[reactivemongo.api.bson.BSONWriter[A]] = Types.BsonWriter[A]
+    if (isDirectionalMap[A])
+      Type[A] match {
+        case IsMap(isMap) =>
+          import isMap.Underlying as Pair
+          deriveDirectionalMapWriter[A, Pair](isMap.value, writerCtx)
+        case _ => MIO.fail(new Exception(s"Could not inspect map ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalOption[A])
+      Type[A] match {
+        case IsOption(option) =>
+          import option.Underlying as Inner
+          resolveDirectionalWriter[Inner](writerCtx.nest[Inner]).map { innerWriter =>
+            Expr.quote {
+              new reactivemongo.api.bson.BSONWriter[A] {
+                def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] =
+                  value.asInstanceOf[Option[Inner]] match {
+                    case Some(inner) => Expr.splice(innerWriter).writeTry(inner)
+                    case None        => scala.util.Success(reactivemongo.api.bson.BSONNull)
+                  }
+              }
+            }
+          }
+        case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalCollection[A])
+      Type[A] match {
+        case IsCollection(isCollection) =>
+          import isCollection.Underlying as Item
+          deriveDirectionalCollectionWriter[A, Item](isCollection.value, writerCtx)
+        case _ => MIO.fail(new Exception(s"Could not inspect collection ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalValueType[A])
+      Type[A] match {
+        case IsValueType(valueType) =>
+          import valueType.Underlying as Inner
+          resolveDirectionalWriter[Inner](writerCtx.nest[Inner]).map { innerWriter =>
+            val unwrap = directLambda[A, Inner](valueType.value.unwrap)
+            Expr.quote {
+              new reactivemongo.api.bson.BSONWriter[A] {
+                def writeTry(value: A): Try[reactivemongo.api.bson.BSONValue] =
+                  Expr.splice(innerWriter).writeTry(Expr.splice(unwrap).apply(value))
+              }
+            }
+          }
+        case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalRecord[A] || Enum.parse[A].toEither.isRight) {
+      implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+      implicit val TryDocumentT: Type[Try[BSONDocument]] = Types.TryCtor[BSONDocument]
+      deriveWriterBody[A](writerCtx) >> writerCtx.cache
+        .get1Ary[A, Try[BSONDocument]]("cached-writer-body")
+        .flatMap {
+          case Some(call) => MIO.pure(writerFromDocumentWrite[A](call))
+          case None       => MIO.fail(new Exception(s"No cached writer body for ${Type[A].prettyPrint}"))
+        }
+    } else
+      MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, implicitFailure))
   }
 
   /** Derive a BSON writer for a collection without requiring a reader for its items. */

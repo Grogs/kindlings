@@ -316,85 +316,93 @@ private[compiletime] trait BsonDirectionalReaderDerivation {
       readerCtx: ReaderCtx[A]
   ): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
     implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
-    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
     Type[reactivemongo.api.bson.BSONReader[A]]
       .summonExprIgnoring(Types.ignoredAutoDerivationMethods*)
       .toEither match {
-      case Right(reader)                  => MIO.pure(reader)
-      case Left(_) if isDirectionalMap[A] =>
-        Type[A] match {
-          case IsMap(isMap) =>
-            import isMap.Underlying as Pair
-            deriveDirectionalMapReader[A, Pair](isMap.value, readerCtx)
-          case _ => MIO.fail(new Exception(s"Could not inspect map ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalOption[A] =>
-        Type[A] match {
-          case IsOption(option) =>
-            import option.Underlying as Inner
-            resolveDirectionalReader[Inner](readerCtx.nest[Inner]).map { innerReader =>
-              Expr.quote {
-                new reactivemongo.api.bson.BSONReader[A] {
-                  def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
-                    case reactivemongo.api.bson.BSONNull => scala.util.Success(None.asInstanceOf[A])
-                    case other => Expr.splice(innerReader).readTry(other).map(v => Some(v).asInstanceOf[A])
-                  }
-                }
-              }
-            }
-          case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalCollection[A] =>
-        Type[A] match {
-          case IsCollection(isCollection) =>
-            import isCollection.Underlying as Item
-            deriveDirectionalCollectionReader[A, Item](isCollection.value, readerCtx)
-          case _ => MIO.fail(new Exception(s"Could not inspect collection ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalValueType[A] =>
-        Type[A] match {
-          case IsValueType(valueType) =>
-            import valueType.Underlying as Inner
-            resolveDirectionalReader[Inner](readerCtx.nest[Inner]).map { innerReader =>
-              val wrap = directLambda[Inner, A] { inner =>
-                valueType.value.wrap match {
-                  case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
-                    val result = valueType.value.wrap.apply(inner).asInstanceOf[Expr[Either[String, A]]]
-                    Expr.quote(
-                      Expr.splice(result).fold(message => throw new IllegalArgumentException(message), identity)
-                    )
-                  case _ => valueType.value.wrap.apply(inner).asInstanceOf[Expr[A]]
-                }
-              }
-              Expr.quote {
-                new reactivemongo.api.bson.BSONReader[A] {
-                  def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] =
-                    Expr.splice(innerReader).readTry(value).map(Expr.splice(wrap).apply)
-                }
-              }
-            }
-          case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
-        }
-      case Left(_) if isDirectionalRecord[A] || Enum.parse[A].toEither.isRight =>
-        implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
-        deriveReaderBody[A](readerCtx) >> readerCtx.cache
-          .get1Ary[BSONDocument, Try[A]]("cached-reader-body")
-          .flatMap {
-            case Some(call) =>
-              MIO.pure(Expr.quote {
-                new reactivemongo.api.bson.BSONReader[A] {
-                  def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
-                    case document: BSONDocument => Expr.splice(call(Expr.quote(document)))
-                    case other                  =>
-                      scala.util.Failure(new IllegalArgumentException("Expected BSONDocument, got " + other))
-                  }
-                }
-              })
-            case None => MIO.fail(new Exception(s"No cached reader body for ${Type[A].prettyPrint}"))
-          }
-      case Left(reason) =>
-        MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, reason))
+      case Right(reader) => MIO.pure(reader)
+      case Left(reason)  => deriveDirectionalReaderStructurally[A](readerCtx, reason)
     }
+  }
+
+  protected def deriveDirectionalReaderStructurally[A: Type](
+      readerCtx: ReaderCtx[A],
+      implicitFailure: String = "No BSONReader found"
+  ): MIO[Expr[reactivemongo.api.bson.BSONReader[A]]] = {
+    implicit val ReaderA: Type[reactivemongo.api.bson.BSONReader[A]] = Types.BsonReader[A]
+    implicit val TryAT: Type[Try[A]] = Types.TryCtor[A]
+    if (isDirectionalMap[A])
+      Type[A] match {
+        case IsMap(isMap) =>
+          import isMap.Underlying as Pair
+          deriveDirectionalMapReader[A, Pair](isMap.value, readerCtx)
+        case _ => MIO.fail(new Exception(s"Could not inspect map ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalOption[A])
+      Type[A] match {
+        case IsOption(option) =>
+          import option.Underlying as Inner
+          resolveDirectionalReader[Inner](readerCtx.nest[Inner]).map { innerReader =>
+            Expr.quote {
+              new reactivemongo.api.bson.BSONReader[A] {
+                def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
+                  case reactivemongo.api.bson.BSONNull => scala.util.Success(None.asInstanceOf[A])
+                  case other => Expr.splice(innerReader).readTry(other).map(v => Some(v).asInstanceOf[A])
+                }
+              }
+            }
+          }
+        case _ => MIO.fail(new Exception(s"Could not inspect Option ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalCollection[A])
+      Type[A] match {
+        case IsCollection(isCollection) =>
+          import isCollection.Underlying as Item
+          deriveDirectionalCollectionReader[A, Item](isCollection.value, readerCtx)
+        case _ => MIO.fail(new Exception(s"Could not inspect collection ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalValueType[A])
+      Type[A] match {
+        case IsValueType(valueType) =>
+          import valueType.Underlying as Inner
+          resolveDirectionalReader[Inner](readerCtx.nest[Inner]).map { innerReader =>
+            val wrap = directLambda[Inner, A] { inner =>
+              valueType.value.wrap match {
+                case _: CtorLikeOf.EitherStringOrValue[?, ?] =>
+                  val result = valueType.value.wrap.apply(inner).asInstanceOf[Expr[Either[String, A]]]
+                  Expr.quote(
+                    Expr.splice(result).fold(message => throw new IllegalArgumentException(message), identity)
+                  )
+                case _ => valueType.value.wrap.apply(inner).asInstanceOf[Expr[A]]
+              }
+            }
+            Expr.quote {
+              new reactivemongo.api.bson.BSONReader[A] {
+                def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] =
+                  Expr.splice(innerReader).readTry(value).map(Expr.splice(wrap).apply)
+              }
+            }
+          }
+        case _ => MIO.fail(new Exception(s"Could not inspect value type ${Type[A].prettyPrint}"))
+      }
+    else if (isDirectionalRecord[A] || Enum.parse[A].toEither.isRight) {
+      implicit val DocumentT: Type[BSONDocument] = Types.BsonDocument
+      deriveReaderBody[A](readerCtx) >> readerCtx.cache
+        .get1Ary[BSONDocument, Try[A]]("cached-reader-body")
+        .flatMap {
+          case Some(call) =>
+            MIO.pure(Expr.quote {
+              new reactivemongo.api.bson.BSONReader[A] {
+                def readTry(value: reactivemongo.api.bson.BSONValue): Try[A] = value match {
+                  case document: BSONDocument => Expr.splice(call(Expr.quote(document)))
+                  case other                  =>
+                    scala.util.Failure(new IllegalArgumentException("Expected BSONDocument, got " + other))
+                }
+              }
+            })
+          case None => MIO.fail(new Exception(s"No cached reader body for ${Type[A].prettyPrint}"))
+        }
+    } else
+      MIO.fail(BsonDocumentHandlerDerivationError.CannotDeriveField(Type[A].prettyPrint, implicitFailure))
   }
 
   /** Derive a BSON reader for a collection without requiring a writer for its items. */

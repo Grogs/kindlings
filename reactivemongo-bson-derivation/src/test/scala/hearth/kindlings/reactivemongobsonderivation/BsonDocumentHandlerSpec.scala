@@ -23,6 +23,24 @@ final class BsonDocumentHandlerSpec extends BsonDocumentHandlerSuite {
       assertEquals(KindlingsBsonDocumentHandler.write(Empty()).get, BSONDocument.empty)
     }
 
+    test("root wrappers preserve their document wire format") {
+      val collection = List(1, 2, 3)
+      val collectionDocument = BSONDocument("values" -> BSONArray(1, 2, 3))
+      assertRoundTrip(KindlingsBsonDocumentHandler.derived[List[Int]], collection, collectionDocument)
+      assertEquals(KindlingsBsonDocumentHandler.write(collection).get, collectionDocument)
+
+      val map = Map("one" -> 1, "two" -> 2)
+      val mapDocument = BSONDocument("one" -> 1, "two" -> 2)
+      assertRoundTrip(KindlingsBsonDocumentHandler.derived[Map[String, Int]], map, mapDocument)
+      assertEquals(KindlingsBsonDocumentHandler.write(map).get, mapDocument)
+
+      assertRoundTrip(
+        KindlingsBsonDocumentHandler.derived[WrapperId],
+        WrapperId(7),
+        BSONDocument("value" -> 7)
+      )
+    }
+
     test("inline write handles nested records") {
       val value = PersonWithAddress("Bob", Address("123 Main St", "Springfield"))
       assertEquals(
