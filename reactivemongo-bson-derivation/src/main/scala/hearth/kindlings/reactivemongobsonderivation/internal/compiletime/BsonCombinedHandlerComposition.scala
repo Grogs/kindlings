@@ -85,7 +85,8 @@ private[compiletime] trait BsonCombinedHandlerComposition {
             }
           }
         }
-      case _ => Environment.reportErrorAndAbort(s"No directional BSON document body generated for ${Type[A].prettyPrint}")
+      case _ =>
+        Environment.reportErrorAndAbort(s"No directional BSON document body generated for ${Type[A].prettyPrint}")
     }
   }
 
