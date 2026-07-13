@@ -132,12 +132,8 @@ final case class WithPerFieldIO(
 )
 
 // Reference-ported test data
-final case class Pet(name: String, owner: Person)
-
 final case class Primitives(dbl: Double, str: String, bl: Boolean, int: Int, long: Long)
 
-final case class Optional(name: String, value: Option[String])
-final case class OptionalAsNull(name: String, @NoneAsNull value: Option[String])
 final case class OptionalSingle(value: Option[String])
 final case class OptionalGeneric[T](v: Int, opt: Option[T])
 
@@ -182,7 +178,6 @@ final case class WithDefaultValues2(
     @DefaultValue(Range(7, 11)) range: Range
 )
 
-final case class WithMap1(name: String, localizedDescription: Map[String, String])
 final case class WithLocaleMap(name: String, localizedDescription: Map[java.util.Locale, String])
 final case class WithUUIDMap(items: Map[java.util.UUID, Int])
 final case class WithFooValMap(values: Map[FooVal, String])
@@ -200,9 +195,6 @@ object PrefKind {
 }
 final case class Preference[V](key: String, kind: PrefKind.Aux[V], value: V)
 final case class Person2(name: String, age: Int, phoneNum: Long, itemList: Seq[Item], list: Seq[Int])
-
-final case class WithValueClass(value: Int) extends AnyVal
-final case class WithValueTypeField(name: String, id: WithValueClass)
 
 final case class WithIgnoredField(
     id: Int,

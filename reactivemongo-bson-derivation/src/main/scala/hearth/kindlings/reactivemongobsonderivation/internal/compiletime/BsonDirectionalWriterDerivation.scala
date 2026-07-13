@@ -90,15 +90,12 @@ private[compiletime] trait BsonDirectionalWriterDerivation {
                   runSafe {
                     implicit val IgnoreT: Type[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore] =
                       Types.ignoreAnn
-                    val parameters = plan.fields
-                    val fieldValues = directionalRecordFieldValues[A](value).filterNot { case (name, _) =>
-                      val parameter = parameters.find(_._1 == name).get._2
+                    val fieldValues = directionalRecordFieldValues[A](plan, value).filterNot { case (_, parameter, _) =>
                       hasAnnotationType[hearth.kindlings.reactivemongobsonderivation.annotations.Ignore](parameter)
                     }
-                    val deriveField = { (entry: (String, Expr_??)) =>
-                      val (name, fieldValue) = entry
+                    val deriveField = { (entry: (String, Parameter, Expr_??)) =>
+                      val (name, parameter, fieldValue) = entry
                       import fieldValue.Underlying as Field
-                      val parameter = parameters.find(_._1 == name).get._2
                       val key = resolveDirectionalFieldKey(
                         name,
                         parameter,
@@ -248,18 +245,27 @@ private[compiletime] trait BsonDirectionalWriterDerivation {
     }
   }
 
-  private def directionalRecordFieldValues[A: Type](value: Expr[A]): List[(String, Expr_??)] =
+  private def directionalRecordFieldValues[A: Type](
+      plan: DirectionalRecordPlan,
+      value: Expr[A]
+  ): List[(String, Parameter, Expr_??)] =
     CaseClass.parse[A].toEither match {
-      case Right(caseClass) => caseClass.caseFieldValuesAt(value).toList
-      case Left(_)          =>
+      case Right(caseClass) =>
+        val valuesByName = caseClass.caseFieldValuesAt(value).toList.toMap
+        plan.fields.map { case (name, parameter) => (name, parameter, valuesByName(name)) }
+      case Left(_) =>
         NamedTuple.parse[A].toEither match {
-          case Right(namedTuple) =>
-            namedTuple.primaryConstructor.parameters.flatten.toList.map { case (name, parameter) =>
+          case Right(_) =>
+            plan.fields.map { case (name, parameter) =>
               import parameter.tpe.Underlying as Field
               val index = Expr(parameter.index)
-              name -> Expr.quote {
-                Expr.splice(value).asInstanceOf[Product].productElement(Expr.splice(index)).asInstanceOf[Field]
-              }.as_??
+              (
+                name,
+                parameter,
+                Expr.quote {
+                  Expr.splice(value).asInstanceOf[Product].productElement(Expr.splice(index)).asInstanceOf[Field]
+                }.as_??
+              )
             }
           case Left(reason) => Environment.reportErrorAndAbort(reason)
         }
